@@ -3443,6 +3443,82 @@ async function generarPdfDiagnostico(cache, mode){
   }
   y+=4; rule();
 
+  // ---------- Levantamiento de sitio: lo registrado en el inventario (equipos, personal, etc.) ----------
+  try{
+    const tipoIds = await ensureTipoIds();
+    const [collR, regR] = await Promise.all([
+      cachedRead("ev:"+ev.id+":coll_all", ()=>sb.from("colecciones_items").select("*").eq("evaluacion_id", ev.id).order("created_at")),
+      cachedRead("ev:"+ev.id+":reg_all", ()=>sb.from("registros_unicos").select("*").eq("evaluacion_id", ev.id)),
+    ]);
+    const invItems = collR.data || [], invRegs = regR.data || [];
+    if(invItems.length || invRegs.length){
+      const fotoPorItem = {};
+      if(navigator.onLine && invItems.length){
+        try{
+          const { data: evs } = await sb.from("evidencias").select("coleccion_item_id,storage_path_thumbnail,storage_path_optimizada").in("coleccion_item_id", invItems.map(x=>x.id)).is("anulado_at", null);
+          (evs||[]).forEach(e=>{ if(!fotoPorItem[e.coleccion_item_id]) fotoPorItem[e.coleccion_item_id] = e; });
+        }catch(e){}
+      }
+      const fotoData = async (e) => {
+        try{
+          const { data: signed } = await sb.storage.from("evidencias").createSignedUrl(e.storage_path_thumbnail || e.storage_path_optimizada, 300);
+          if(!signed) return null;
+          const blob = await (await fetch(signed.signedUrl)).blob();
+          return await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(blob); });
+        }catch(err){ return null; }
+      };
+      checkBreak(70);
+      heading(`Levantamiento de sitio (${invItems.length + invRegs.length} registro${invItems.length+invRegs.length===1?"":"s"})`, 13);
+      body("Lo que se registró durante la visita. Es el inventario de referencia para el seguimiento; los puntos por corregir están arriba.", {size:10, color:SOFT, lh:13});
+      y += 6;
+      for(const [codigo, schema] of Object.entries(COLLECTION_SCHEMAS)){
+        const lista = invItems.filter(x=>x.tipo_id===tipoIds["c:"+codigo]);
+        if(!lista.length) continue;
+        checkBreak(40);
+        doc.setFillColor(...NAVY); doc.rect(margin, y-11, maxW, 18, "F");
+        doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(255,255,255);
+        doc.text(`${schema.label} (${lista.length})`, margin+8, y+1);
+        y += 20;
+        for(const it of lista){
+          const campos = it.campos || {};
+          const titulo = campos[schema.titleField] || schema.singular || "(sin nombre)";
+          const detalle = (schema.fields||[]).filter(f=>f.key!==schema.titleField && campos[f.key]).map(f=>`${f.label}: ${campos[f.key]}`).join(" · ");
+          const foto = fotoPorItem[it.id] ? await fotoData(fotoPorItem[it.id]) : null;
+          const tx = margin + (foto ? 58 : 0), tw = maxW - (foto ? 58 : 0);
+          doc.setFont("helvetica","bold"); doc.setFontSize(10.5); const tl = doc.splitTextToSize(titulo, tw);
+          doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
+          const dl = detalle ? doc.splitTextToSize(detalle, tw) : [];
+          const ol = it.observaciones ? doc.splitTextToSize("Obs.: " + it.observaciones, tw) : [];
+          const h = Math.max(foto ? 40 : 0, tl.length*13 + (dl.length+ol.length)*12) + 8;
+          checkBreak(h + 4);
+          const y0 = y;
+          if(foto){ try{ doc.addImage(foto, foto.startsWith("data:image/png") ? "PNG" : "JPEG", margin, y0-9, 50, 38); }catch(e){} }
+          let yy = y0;
+          doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(...INK); tl.forEach(t=>{ doc.text(t, tx, yy); yy+=13; });
+          doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(...SOFT); dl.forEach(t=>{ doc.text(t, tx, yy); yy+=12; }); ol.forEach(t=>{ doc.text(t, tx, yy); yy+=12; });
+          y = Math.max(yy, y0 + (foto ? 34 : 0)) + 6;
+          doc.setDrawColor(232,232,228); doc.line(margin, y-4, pageW-margin, y-4); y += 6;
+        }
+        y += 6;
+      }
+      for(const [codigo, schema] of Object.entries(SINGLE_SCHEMAS)){
+        const reg = invRegs.find(x=>x.tipo_id===tipoIds["r:"+codigo]);
+        if(!reg) continue;
+        checkBreak(40);
+        doc.setFillColor(...NAVY); doc.rect(margin, y-11, maxW, 18, "F");
+        doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(255,255,255);
+        doc.text(schema.label, margin+8, y+1);
+        y += 20;
+        const campos = reg.campos || {};
+        const filas = (schema.fields||[]).filter(f=>campos[f.key]).map(f=>`${f.label}: ${campos[f.key]}`);
+        if(!filas.length) body("Registrado sin detalle.", {size:9.5, color:SOFT, lh:12});
+        filas.forEach(t=> body(t, {size:9.5, color:INK, lh:13}));
+        y += 8;
+      }
+      y += 4; rule();
+    }
+  }catch(invErr){ console.warn("No se pudo agregar el levantamiento de sitio al PDF:", invErr); }
+
   heading("Conclusión", 13);
   body(`El presente documento constituye un diagnóstico de revisión realizado con base en la información, documentación y evidencia recabada durante la visita del ${ev.fecha_visita||"(fecha no registrada)"}. No sustituye una visita de verificación ni una resolución emitida por la autoridad sanitaria.`);
 
