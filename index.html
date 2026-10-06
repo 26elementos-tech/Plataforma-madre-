@@ -734,7 +734,7 @@ function computeManualPrioridad(impacto, probabilidad){
 async function renderHallazgosLibresList(evaluacionId){
   const cont = document.getElementById("hallazgos-libres-list");
   if(!cont) return;
-  const { data, error } = await sb.from("hallazgos").select("*").eq("evaluacion_id", evaluacionId).eq("origen","libre").order("created_at",{ascending:false});
+  const { data, error } = await cachedRead("ev:"+evaluacionId+":hallazgos_libres", ()=>sb.from("hallazgos").select("*").eq("evaluacion_id", evaluacionId).eq("origen","libre").order("created_at",{ascending:false}));
   if(error){ cont.innerHTML = `<div class="err small">${esc(error.message)}</div>`; return; }
   if(!data || data.length===0){ cont.innerHTML = `<div class="empty-note">Sin hallazgos libres todavía.</div>`; return; }
   cont.innerHTML = "";
@@ -751,17 +751,40 @@ async function renderHallazgosLibresList(evaluacionId){
   });
 }
 
+
+/* Hallazgo de visita guiado: eliges el área y el motivo, y la descripción, la acción y la
+   prioridad se llenan solas (todo editable). Si el área coincide con un área del diagnóstico,
+   el hallazgo aparece agrupado ahí en el reporte en lugar de "Hallazgos de visita". */
+const HL_AREAS = ["Autorizaciones sanitarias","Personal y documentación profesional","Equipamiento y dispositivos médicos","Insumos y medicamentos","RPBI","Expediente clínico","Publicidad sanitaria","Condiciones generales del establecimiento","Limpieza e higiene","Protección civil","Seguridad del personal"];
+const HL_MOTIVOS = [
+  {m:"Sin registro sanitario", d:"no cuenta con registro sanitario visible o comprobable", a:"Solicitar al proveedor el número de registro sanitario y conservar copia; si no lo tiene, suspender su uso hasta regularizarlo.", i:4, p:3},
+  {m:"Sin mantenimiento vigente", d:"no tiene mantenimiento vigente documentado", a:"Programar mantenimiento con proveedor calificado y conservar la constancia y la bitácora.", i:3, p:3},
+  {m:"Sin manual o bitácora", d:"no tiene manual de operación o bitácora de uso", a:"Integrar el manual de operación y una bitácora de uso y mantenimiento.", i:2, p:3},
+  {m:"Caducado o vencido", d:"está caducado o vencido", a:"Retirarlo de uso de inmediato y desecharlo conforme a su tipo; revisar caducidades periódicamente.", i:4, p:3},
+  {m:"Falta documento o comprobante", d:"no cuenta con el documento o comprobante correspondiente", a:"Obtener el documento y conservarlo disponible para la autoridad.", i:3, p:3},
+  {m:"Dañado o en mal estado", d:"está dañado o en mal estado", a:"Reparar o sustituir antes de seguir usándolo.", i:3, p:3},
+  {m:"Mal almacenado", d:"está almacenado de forma inadecuada", a:"Reubicar y almacenar conforme a las indicaciones del fabricante y separado por tipo.", i:3, p:2},
+  {m:"Falta señalización o rótulo", d:"carece de señalización o rótulo visible", a:"Colocar la señalización o rótulo visible.", i:2, p:3},
+  {m:"Limpieza deficiente", d:"presenta limpieza deficiente", a:"Corregir la limpieza y definir una rutina con responsable y registro.", i:3, p:3},
+  {m:"Otro", d:"", a:"", i:2, p:2},
+];
 function openHallazgoLibreForm(existing){
   return new Promise((resolve)=>{
     const impactoVal = existing?.impacto || 2, probVal = existing?.probabilidad || 2;
     const sheet = openModal(`
       <h3>${existing?"Editar":"Nuevo"} hallazgo de visita</h3>
+      <label>1. Área</label>
+      <div class="chip-grid" id="hl-area">${HL_AREAS.map(a=>`<div class="chip ${existing?.categoria===a?'selected':''}" data-a="${esc(a)}">${esc(a)}</div>`).join("")}</div>
+      <input type="text" data-f="categoria" value="${esc(existing?.categoria||"")}" placeholder="O escribe otra área" style="margin-top:6px">
+      <label>2. ¿Qué o dónde? (equipo, documento, espacio)</label>
+      <input type="text" id="hl-objeto" placeholder="Ej. Láser diodo, cabina 2, botiquín">
+      ${existing ? "" : `<label>3. Motivo</label>
+      <div class="chip-grid" id="hl-motivo">${HL_MOTIVOS.map((x,i)=>`<div class="chip" data-i="${i}">${esc(x.m)}</div>`).join("")}</div>
+      <p class="muted small" style="margin:6px 0 0">Al elegir el motivo se llenan solos la descripción, la acción y la prioridad. Puedes editarlos.</p>`}
       <label>Descripción</label>
       <textarea data-f="descripcion" placeholder='Ej. "El extintor está bloqueado por mobiliario"'>${esc(existing?.descripcion||"")}</textarea>
       <label>Ubicación</label>
       <input type="text" data-f="ubicacion" value="${esc(existing?.ubicacion||"")}" placeholder="Ej. Pasillo, cabina 2">
-      <label>Área / categoría</label>
-      <input type="text" data-f="categoria" value="${esc(existing?.categoria||"")}" placeholder="Ej. Protección civil, Seguridad, Instalaciones">
       <label>Impacto (1-4)</label>
       <div class="chip-grid" id="hl-impacto">${[1,2,3,4].map(n=>`<div class="chip ${impactoVal===n?'selected':''}" data-n="${n}">${n}</div>`).join("")}</div>
       <label>Probabilidad (1-4)</label>
@@ -783,6 +806,35 @@ function openHallazgoLibreForm(existing){
       ${existing?`<button class="btn btn-ghost" id="m-del" style="width:100%;margin-top:8px;color:var(--bad)">Eliminar</button>`:""}
     `);
     let impSel = impactoVal, probSel = probVal;
+    // Áreas reales de esta evaluación (las del diagnóstico) + generales; así el hallazgo cae en su área.
+    (async()=>{
+      try{
+        const evId = state.currentEvaluacion?.id; if(!evId) return;
+        const r = await cachedRead("ev:"+evId+":modulos", ()=>sb.from("evaluacion_criterios_snapshot").select("modulo").eq("evaluacion_id", evId));
+        const mods = [...new Set((r.data||[]).map(x=>x.modulo).filter(Boolean))];
+        if(!mods.length) return;
+        const extra = ["Equipamiento y dispositivos médicos","Insumos y medicamentos","Limpieza e higiene"];
+        const lista = [...mods, ...extra.filter(x=>!mods.includes(x))];
+        const cont = sheet.querySelector("#hl-area"); if(!cont) return;
+        cont.innerHTML = lista.map(a=>`<div class="chip ${catInp.value===a?'selected':''}" data-a="${esc(a)}">${esc(a)}</div>`).join("");
+        cont.querySelectorAll(".chip").forEach(ch=>ch.onclick=()=>{ cont.querySelectorAll(".chip").forEach(x=>x.classList.remove("selected")); ch.classList.add("selected"); catInp.value = ch.dataset.a; });
+      }catch(e){}
+    })();
+    const catInp = sheet.querySelector('[data-f="categoria"]');
+    sheet.querySelectorAll("#hl-area .chip").forEach(ch=>ch.onclick=()=>{ sheet.querySelectorAll("#hl-area .chip").forEach(x=>x.classList.remove("selected")); ch.classList.add("selected"); catInp.value = ch.dataset.a; });
+    catInp.addEventListener("input", ()=> sheet.querySelectorAll("#hl-area .chip").forEach(x=>x.classList.toggle("selected", x.dataset.a===catInp.value)));
+    const setChips = (sel, n) => sheet.querySelectorAll(sel+" .chip").forEach(x=>x.classList.toggle("selected", parseInt(x.dataset.n,10)===n));
+    sheet.querySelectorAll("#hl-motivo .chip").forEach(ch=>ch.onclick=()=>{
+      sheet.querySelectorAll("#hl-motivo .chip").forEach(x=>x.classList.remove("selected")); ch.classList.add("selected");
+      const mo = HL_MOTIVOS[parseInt(ch.dataset.i,10)];
+      const obj = sheet.querySelector("#hl-objeto").value.trim();
+      const desc = sheet.querySelector('[data-f="descripcion"]'), acc = sheet.querySelector('[data-f="accion"]');
+      if(mo.d) desc.value = (obj ? obj + " " : "El elemento revisado ") + mo.d + ".";
+      else if(obj && !desc.value) desc.value = obj + ": ";
+      if(mo.a) acc.value = mo.a;
+      impSel = mo.i; probSel = mo.p; setChips("#hl-impacto", impSel); setChips("#hl-prob", probSel);
+      const ub = sheet.querySelector('[data-f="ubicacion"]'); if(obj && !ub.value) ub.value = obj;
+    });
     sheet.querySelectorAll("#hl-impacto .chip").forEach(ch=>ch.onclick=()=>{ impSel=parseInt(ch.dataset.n,10); sheet.querySelectorAll("#hl-impacto .chip").forEach(x=>x.classList.remove("selected")); ch.classList.add("selected"); });
     sheet.querySelectorAll("#hl-prob .chip").forEach(ch=>ch.onclick=()=>{ probSel=parseInt(ch.dataset.n,10); sheet.querySelectorAll("#hl-prob .chip").forEach(x=>x.classList.remove("selected")); ch.classList.add("selected"); });
     if(existing) renderEvidenceRow(sheet.querySelector("#evid-hl-"+existing.id), state.currentEvaluacion.id, "hallazgo_id", existing.id);
@@ -1268,10 +1320,33 @@ function showError(msg){
 }
 
 /* --------------------------- Sesión / AuthGuard --------------------------- */
+/* El perfil se guarda en el teléfono: sin señal se usa la copia, y un error de red
+   NUNCA dispara el flujo de "crear cuenta" (eso solo pasa si de verdad no existe). */
+const PERFIL_KEY = "pm-perfil-v1";
+function cachedProfile(userId){ try{ const p = JSON.parse(localStorage.getItem(PERFIL_KEY)||"null"); return (p && p.id===userId) ? p : null; }catch(e){ return null; } }
 async function loadProfile(userId){
-  const { data, error } = await sb.from("profiles").select("*").eq("id", userId).maybeSingle();
-  if(error){ console.error("Error cargando profile:", error); return null; }
+  let data = null, error = null;
+  try{ ({ data, error } = await sb.from("profiles").select("*").eq("id", userId).maybeSingle()); }catch(e){ error = e; }
+  if(error){ console.error("Error cargando profile:", error); return cachedProfile(userId) || undefined; }
+  if(data){ try{ localStorage.setItem(PERFIL_KEY, JSON.stringify(data)); }catch(e){} }
   return data;
+}
+/* Sesión guardada por Supabase en este teléfono (para abrir sin señal aunque el token haya vencido). */
+function storedAuthUser(){
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(/^sb-.*-auth-token$/.test(k)){ const v = JSON.parse(localStorage.getItem(k)||"null"); const u = v?.user || v?.currentSession?.user; if(u && u.id) return u; }
+    }
+  }catch(e){}
+  return null;
+}
+function offlineSessionFallback(){
+  if(navigator.onLine) return false;
+  const u = storedAuthUser(); const p = u && cachedProfile(u.id);
+  if(!u || !p) return false;
+  state.session = {user:u, offline:true}; state.profile = p;
+  return true;
 }
 
 // Crea la fila de perfil si hay sesion pero todavia no existe (pasa cuando el
@@ -1281,6 +1356,7 @@ let pendingSignupName = "";
 async function ensureProfile(session){
   let profile = await loadProfile(session.user.id);
   if(profile) return profile;
+  if(profile===undefined){ state.authError = navigator.onLine ? "No se pudo cargar tu perfil. Revisa tu conexión e intenta de nuevo." : "Sin conexión. Abre la app una vez con señal para dejarla lista sin conexión."; return null; }
   const nombre = pendingSignupName || (await askText("Bienvenido", "Para terminar de crear tu cuenta, escribe tu nombre completo", "Tu nombre")) || "Sin nombre";
   pendingSignupName = "";
   const { error: e1 } = await sb.from("profiles").insert({ id: session.user.id, nombre_completo: nombre, rol: "admin" });
@@ -1302,13 +1378,16 @@ sb.auth.onAuthStateChange(async (event, session) => {
       render();
     }
   } else {
+    if(event!=="SIGNED_OUT" && offlineSessionFallback()){ if(state.screen==="loading"||state.screen==="login") go("dashboard"); return; }
     state.profile = null;
     go("login");
   }
 });
 
 async function initSession(){
-  const { data } = await sb.auth.getSession();
+  let data = {session:null};
+  try{ ({ data } = await sb.auth.getSession()); }catch(e){ data = {session:null}; }
+  if(!data.session && offlineSessionFallback()){ go("dashboard"); offerResume(); return; }
   if(data.session){
     state.session = data.session;
     state.profile = await ensureProfile(data.session);
@@ -1431,7 +1510,7 @@ async function renderDashboard(){
   `;
   document.getElementById("btn-logout").onclick = handleLogout;
 
-  const { data: todos, error } = await sb.from("expedientes").select("*").order("updated_at", {ascending:false});
+  const { data: todos, error, fromCache } = await cachedRead("dashboard:expedientes", ()=>sb.from("expedientes").select("*").order("updated_at", {ascending:false}));
   const c = document.getElementById("dash-content");
   if(error){ c.innerHTML = `<div class="err">No se pudieron cargar los expedientes: ${esc(error.message)}</div>`; return; }
   const activos = (todos||[]).filter(e=>!e.archivado_at);
