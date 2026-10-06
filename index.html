@@ -2,6 +2,9 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Elementos">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
 <title>Plataforma Madre | Elementos Financieros</title>
 <style>
@@ -1177,7 +1180,40 @@ setInterval(()=>{ if(navigator.onLine) flushOfflineQueue(); }, 20000);
 
 const $app = document.getElementById("app");
 function esc(s){ return (s==null?"":String(s)).replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
-function go(screen, extra){ state.screen = screen; Object.assign(state, extra||{}); render(); window.scrollTo(0,0); }
+function go(screen, extra){ state.screen = screen; Object.assign(state, extra||{}); render(); window.scrollTo(0,0); saveResume(); }
+
+/* ------------------------- Retomar donde te quedaste -------------------------
+   Si la app se cierra (el visor la descarga de memoria, se bloquea el teléfono), al volver
+   a entrar ofrece regresar a la misma pantalla con lo que ya habías capturado del wizard.
+   Se guarda en este dispositivo en cada cambio de pantalla, cada 3 segundos y al salir. */
+const RESUME_KEY = "pm-retomar-v1";
+const RESUME_LABEL = {"wizard-eval":"Nueva evaluación COFEPRIS","wizard-eval-stps":"Nueva evaluación STPS","wizard-eval-pc":"Nueva evaluación Protección Civil","op-wizard":"Check-up Operativo","op-resultado":"Resultado del Check-up Operativo","expediente":"Expediente"};
+function saveResume(){
+  try{
+    if(["loading","login"].includes(state.screen)) return;
+    if(state.screen==="dashboard"){ if(state._resumeAsked) localStorage.removeItem(RESUME_KEY); return; }
+    const snap = {t:Date.now(), uid:state.session?.user?.id||null, screen:state.screen,
+      currentExpediente: state.currentExpediente ? {id:state.currentExpediente.id, nombre_expediente:state.currentExpediente.nombre_expediente} : null,
+      currentEvaluacion: state.currentEvaluacion || null, wizard: state.wizard || null, opEval: state.opEval || null,
+      expTab: (typeof EXP_TAB!=="undefined") ? EXP_TAB : null};
+    localStorage.setItem(RESUME_KEY, JSON.stringify(snap));
+  }catch(e){ /* sin espacio o dato no serializable: no bloquea la app */ }
+}
+setInterval(saveResume, 3000);
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="hidden"){ try{ document.activeElement && document.activeElement.blur && document.activeElement.blur(); }catch(e){} saveResume(); } });
+window.addEventListener("pagehide", saveResume);
+async function offerResume(){
+  if(state._resumeAsked) return false; state._resumeAsked = true;
+  let snap = null; try{ snap = JSON.parse(localStorage.getItem(RESUME_KEY)||"null"); }catch(e){}
+  if(!snap || !snap.screen || Date.now()-snap.t > 24*3600*1000) return false;
+  if(snap.uid && state.session?.user?.id && snap.uid !== state.session.user.id) return false;
+  const label = (RESUME_LABEL[snap.screen] || "La pantalla donde estabas") + (snap.currentExpediente?.nombre_expediente ? ` · ${snap.currentExpediente.nombre_expediente}` : (snap.opEval?.expediente_nombre ? ` · ${snap.opEval.expediente_nombre}` : ""));
+  const c = await askChoice(`¿Retomar donde te quedaste?\n${label}`, [{v:1,label:"Sí, retomar"},{v:0,label:"No, ir al inicio"}], o=>o.label);
+  if(!c || !c.v){ localStorage.removeItem(RESUME_KEY); return false; }
+  if(snap.expTab && typeof EXP_TAB!=="undefined") EXP_TAB = snap.expTab;
+  go(snap.screen, {currentExpediente:snap.currentExpediente, currentEvaluacion:snap.currentEvaluacion, wizard:snap.wizard, opEval:snap.opEval});
+  return true;
+}
 
 /* ------------------------- Modal genérico (reemplaza prompt/alert) -------------------------
    Quick Look (la vista previa de Archivos en iOS) no ejecuta prompt()/alert() de forma
@@ -1261,6 +1297,7 @@ sb.auth.onAuthStateChange(async (event, session) => {
     state.profile = await ensureProfile(session);
     if(state.screen === "loading" || state.screen === "login"){
       go(state.profile ? "dashboard" : "login");
+      if(state.profile) offerResume();
     } else {
       render();
     }
@@ -1276,6 +1313,7 @@ async function initSession(){
     state.session = data.session;
     state.profile = await ensureProfile(data.session);
     go(state.profile ? "dashboard" : "login");
+    if(state.profile) offerResume();
   } else {
     go("login");
   }
@@ -3889,6 +3927,12 @@ initSession().catch(err=>{
   console.error(err);
   $app.innerHTML = `<div class="content"><div class="err">Error al iniciar: ${esc(err.message||err)}</div></div>`;
 });
+</script>
+<script>
+/* Modo instalado: registra sw.js (solo funciona publicado en https, p. ej. GitHub Pages) */
+if("serviceWorker" in navigator && location.protocol==="https:"){
+  window.addEventListener("load", ()=>{ navigator.serviceWorker.register("sw.js").catch(e=>console.warn("SW no registrado:", e)); });
+}
 </script>
 </body>
 </html>
