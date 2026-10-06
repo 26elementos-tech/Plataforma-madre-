@@ -310,6 +310,13 @@ const COLLECTION_SCHEMAS = {
   publicidad_captura: {label:"Publicidad (capturas)", icon:"📣", singular:"pieza publicitaria", titleField:"canal", fields:[
     {key:"canal",label:"Canal",type:"select",options:["Instagram","Facebook","TikTok","Página web","Google","Material físico","Otro"]},
     {key:"url",label:"URL",type:"text"},{key:"servicioAnunciado",label:"Servicio/producto anunciado",type:"text"},
+    {key:"chk_cedula_post",label:"¿Incluye nombre del médico, institución y cédula?",type:"select",options:["Sí","No"],niveles:["intermedio","completo"]},
+    {key:"chk_promesas",label:"¿Evita promesas no comprobables (garantizado, permanente, «10 años menos»)?",type:"select",options:["Sí","No"],niveles:["intermedio","completo"]},
+    {key:"chk_terapeutico",label:"¿Evita atribuir propiedades médicas (cura, previene, trata)?",type:"select",options:["Sí","No"],niveles:["intermedio","completo"]},
+    {key:"chk_marcas",label:"¿Evita nombres comerciales de medicamentos (ej. Botox) y su venta?",type:"select",options:["Sí","No"],niveles:["intermedio","completo"]},
+    {key:"chk_riesgos",label:"¿Menciona riesgos y contraindicaciones?",type:"select",options:["Sí","No"],niveles:["completo"]},
+    {key:"chk_antesdespues",label:"Antes y después",type:"select",options:["No usa","Sí, real y con consentimiento","Sí, sin respaldo o sin consentimiento"],niveles:["completo"]},
+    {key:"chk_influencer",label:"¿Es de influencer o testimonio pagado?",type:"select",options:["No","Sí, cumple lo anterior","Sí, no cumple"],niveles:["completo"]},
   ]},
 };
 const SINGLE_SCHEMAS = {
@@ -319,6 +326,18 @@ const SINGLE_SCHEMAS = {
   ]},
   agua: {label:"Agua / higiene de manos", icon:"🚰", fields:[
     {key:"condicionesObservadas",label:"Condiciones observadas",type:"textarea"},
+  ]},
+  redes_perfil: {label:"Redes sociales — perfil", icon:"📱", fields:[
+    {key:"cuentas",label:"Cuentas (Instagram, Facebook, TikTok, web, Google) y quién las maneja",type:"textarea"},
+    {key:"medicoNombre",label:"Médico que se anuncia (nombre completo)",type:"text"},
+    {key:"medicoInstitucion",label:"Institución que expidió su título",type:"text"},
+    {key:"medicoCedula",label:"Cédula profesional",type:"text"},
+    {key:"medicoEspecialidad",label:"Especialidad (si aplica)",type:"text"},
+    {key:"medicoCedulaEsp",label:"Cédula de especialidad (si aplica)",type:"text"},
+    {key:"chk_cedula",label:"¿Institución y cédula aparecen en la biografía y en el post promocional más reciente?",type:"select",options:["Sí","No"]},
+    {key:"chk_permiso",label:"¿Cuentan con permiso (clínica) o aviso (médico) de publicidad?",type:"select",options:["Sí, permiso","Sí, aviso","En trámite","No"]},
+    {key:"permisoNumero",label:"Número de permiso o aviso (si lo tienen)",type:"text"},
+    {key:"chk_congruencia",label:"¿Lo anunciado coincide con su aviso de funcionamiento y lo visto en la visita?",type:"select",options:["Sí","No"]},
   ]},
 };
 // depth: en qué niveles de check-up aparece esta sección. Básico protege lo que ya
@@ -337,6 +356,7 @@ const INVENTORY_SECTIONS = [
   {codigo:"plagas", kind:"collection", depth:["basico","intermedio","completo"], areas:["cofepris"]},
   {codigo:"limpieza", kind:"single", depth:["basico","intermedio","completo"], areas:["cofepris"]},
   {codigo:"agua", kind:"single", depth:["basico","intermedio","completo"], areas:["cofepris"]},
+  {codigo:"redes_perfil", kind:"single", depth:["basico","intermedio","completo"], areas:["cofepris"]},
   {codigo:"publicidad_captura", kind:"collection", depth:["basico","intermedio","completo"], areas:["cofepris"]},
   {codigo:"mobiliario", kind:"collection", depth:["intermedio","completo"], areas:["cofepris"]},
   {codigo:"almacen", kind:"collection", depth:["intermedio","completo"], areas:["cofepris","stps"]},
@@ -566,9 +586,13 @@ async function ensureTipoIds(){
   return map;
 }
 
+function camposPorNivel(fields){
+  const nivel = state.currentEvaluacion?.nivel_checkup;
+  return (fields||[]).filter(f=>!f.niveles || !nivel || f.niveles.includes(nivel));
+}
 function openItemForm(evaluacionId, schema, existing){
   return new Promise((resolve)=>{
-    const fieldsHtml = schema.fields.map(f=>{
+    const fieldsHtml = camposPorNivel(schema.fields).map(f=>{
       const val = (existing && existing.campos && existing.campos[f.key]) || "";
       if(f.type==="textarea") return `<label>${esc(f.label)}</label><textarea data-f="${f.key}">${esc(val)}</textarea>`;
       if(f.type==="select") return `<label>${esc(f.label)}</label><select data-f="${f.key}"><option value="">Selecciona</option>${f.options.map(o=>`<option value="${esc(o)}" ${val===o?"selected":""}>${o}</option>`).join("")}</select>`;
@@ -612,13 +636,39 @@ function openItemForm(evaluacionId, schema, existing){
 /* 🚩 Marcar como hallazgo desde un registro del inventario (como en V3): abre el hallazgo
    con el área sugerida, el nombre del registro y copia sus fotos al hallazgo. */
 const FLAG_AREA = {
-  cofepris: {personal:"Personal y documentación profesional", documento:"Autorizaciones sanitarias", equipo:"Equipamiento y dispositivos médicos", plagas:"Condiciones generales del establecimiento", limpieza:"Limpieza e higiene", agua:"Limpieza e higiene", publicidad_captura:"Publicidad sanitaria", mobiliario:"Condiciones generales del establecimiento", almacen:"Insumos y medicamentos", medicamento:"Insumos y medicamentos", insumo:"Insumos y medicamentos", procedimiento:"Expediente clínico"},
+  cofepris: {personal:"Personal y documentación profesional", documento:"Autorizaciones sanitarias", redes_perfil:"Publicidad sanitaria", equipo:"Equipamiento y dispositivos médicos", plagas:"Condiciones generales del establecimiento", limpieza:"Limpieza e higiene", agua:"Limpieza e higiene", publicidad_captura:"Publicidad sanitaria", mobiliario:"Condiciones generales del establecimiento", almacen:"Insumos y medicamentos", medicamento:"Insumos y medicamentos", insumo:"Insumos y medicamentos", procedimiento:"Expediente clínico"},
   stps: {personal:"Capacitación", documento:"Condiciones laborales", equipo:"Maquinaria y equipo", almacen:"Manejo de materiales"},
   proteccion_civil: {personal:"Brigadas de Protección Civil", documento:"Programa Interno de Protección Civil", equipo:"Prevención y protección contra incendios"},
 };
-async function flagComoHallazgo(evaluacionId, codigo, objeto, descripcion, parentField, parentId){
-  const area = (FLAG_AREA[state.currentDep||"cofepris"]||{})[codigo] || (FLAG_AREA.cofepris[codigo]||"");
-  const res = await openHallazgoLibreForm(null, {categoria: area, objeto, descripcion, conFotos: !!parentId});
+
+/* ------------------------- Publicidad en redes: checklist -> hallazgo -------------------------
+   Lo que sale "No" en el checklist se ofrece como hallazgo ya redactado (área Publicidad sanitaria).
+   Interpretación prudente del Reglamento de la LGS en Materia de Publicidad (arts. 19, 63-65, 79). */
+const REDES_FALLAS = [
+  {k:"chk_cedula", bad:["No"], d:"No aparecen institución y cédula del médico en biografía o publicaciones", a:"Agregar a la biografía y a toda publicación promocional un pie con nombre del médico, institución que expidió el título y cédula profesional."},
+  {k:"chk_permiso", bad:["No","En trámite"], d:"Publicidad de servicios sin permiso o aviso de publicidad ante COFEPRIS", a:"Tramitar el permiso (clínica) o aviso (médico) de publicidad y no pautar tratamientos hasta contar con él."},
+  {k:"chk_congruencia", bad:["No"], d:"Se anuncian servicios que no corresponden a su aviso de funcionamiento o a lo observado", a:"Retirar de redes los servicios que no correspondan al aviso de funcionamiento o a los recursos reales de la clínica."},
+  {k:"chk_cedula_post", bad:["No"], d:"Publicación sin nombre del médico, institución y cédula", a:"Agregar el pie con nombre del médico, institución y cédula a toda publicación promocional."},
+  {k:"chk_promesas", bad:["No"], d:"Promesas de resultado no comprobables", a:"Reescribir sin promesas: limitarse a resultados reales y comprobables."},
+  {k:"chk_terapeutico", bad:["No"], d:"Se atribuyen propiedades médicas a un servicio estético", a:"Quitar las palabras curar, prevenir o tratar en servicios de embellecimiento."},
+  {k:"chk_marcas", bad:["No"], d:"Uso de nombres comerciales de medicamentos o venta por redes", a:"Quitar nombres comerciales de medicamentos y no ofrecerlos en venta por redes."},
+  {k:"chk_riesgos", bad:["No"], d:"No se mencionan riesgos ni contraindicaciones", a:"Agregar la leyenda de riesgos y contraindicaciones."},
+  {k:"chk_antesdespues", bad:["Sí, sin respaldo o sin consentimiento"], d:"Antes y después sin respaldo o sin consentimiento del paciente", a:"Usar solo antes y después reales, sin edición y con consentimiento por escrito del paciente."},
+  {k:"chk_influencer", bad:["Sí, no cumple"], d:"Contenido de influencer o testimonio que no cumple las reglas", a:"Aplicar las mismas reglas a influencers y aprobar sus textos antes de publicar."},
+];
+async function ofrecerHallazgoRedes(evaluacionId, codigo, campos, objeto, parentField, parentId){
+  const fallas = REDES_FALLAS.filter(f=>f.bad.includes(campos[f.k]));
+  if(!fallas.length) return false;
+  const c = await askChoice(`Se detectaron ${fallas.length} punto(s) que no cumplen en esta revisión de redes. ¿Crear hallazgo?`, [{v:1,label:"Sí, crear hallazgo"},{v:0,label:"Ahora no"}], o=>o.label);
+  if(!c || !c.v) return false;
+  await flagComoHallazgo(evaluacionId, codigo, objeto, fallas.map(f=>f.d).join("; ")+".", parentField, parentId, {accion: fallas.map(f=>f.a).join(" "), categoria:"Publicidad sanitaria"});
+  return true;
+}
+
+async function flagComoHallazgo(evaluacionId, codigo, objeto, descripcion, parentField, parentId, extra){
+  extra = extra || {};
+  const area = extra.categoria || (FLAG_AREA[state.currentDep||"cofepris"]||{})[codigo] || (FLAG_AREA.cofepris[codigo]||"");
+  const res = await openHallazgoLibreForm(null, {categoria: area, objeto, descripcion, accion: extra.accion, conFotos: !!parentId});
   if(!(res && res.action==="save")){ renderResumenEvaluacion(); return; }
   const hid = newId();
   const r = await persistEntity("hallazgos", hid, "CREATE", {...res.campos, evaluacion_id: evaluacionId, origen:"libre", clasificacion_id: await getClasifSinClasificar(), created_by: state.profile.id});
@@ -662,6 +712,7 @@ async function openColeccionList(evaluacionId, codigo){
       if(res && res.action==="save"){
         await persistEntity("colecciones_items", item.id, "UPDATE", {campos:res.campos, observaciones:res.observaciones});
         await patchCache("ev:"+evaluacionId+":coll:"+codigo, (list)=>(list||[]).map(x=>x.id===item.id?{...x,campos:res.campos,observaciones:res.observaciones}:x));
+        if(codigo==="publicidad_captura" && await ofrecerHallazgoRedes(evaluacionId, codigo, res.campos, "Publicación en "+(res.campos.canal||"redes"), "coleccion_item_id", item.id)) return;
       } else if(res && res.action==="delete"){
         await persistEntity("colecciones_items", item.id, "DELETE", {});
         await patchCache("ev:"+evaluacionId+":coll:"+codigo, (list)=>(list||[]).filter(x=>x.id!==item.id));
@@ -688,6 +739,7 @@ async function openColeccionList(evaluacionId, codigo){
       await persistEntity("colecciones_items", newItemId, "CREATE", {evaluacion_id:evaluacionId, tipo_id:tipoId, campos:res.campos, observaciones:res.observaciones});
       await patchCache("ev:"+evaluacionId+":coll:"+codigo, (list)=>[...(list||[]), {id:newItemId, evaluacion_id:evaluacionId, tipo_id:tipoId, campos:res.campos, observaciones:res.observaciones, created_at:new Date().toISOString()}]);
       await patchCache("ev:"+evaluacionId+":coll_counts", (rows)=>[...(rows||[]), {tipo_id:tipoId}]);
+      if(codigo==="publicidad_captura" && await ofrecerHallazgoRedes(evaluacionId, codigo, res.campos, "Publicación en "+(res.campos.canal||"redes"), "coleccion_item_id", newItemId)) return;
     }
     openColeccionList(evaluacionId, codigo);
   };
@@ -700,8 +752,9 @@ async function openRegistroUnico(evaluacionId, codigo){
   const { data: existing, error } = await cachedRead("ev:"+evaluacionId+":reg:"+codigo,
     ()=>sb.from("registros_unicos").select("*").eq("evaluacion_id", evaluacionId).eq("tipo_id", tipoId).maybeSingle());
   if(error){ showError("No se pudo cargar: " + error.message); return; }
-  const fieldsHtml = schema.fields.map(f=>{
+  const fieldsHtml = camposPorNivel(schema.fields).map(f=>{
     const val = (existing && existing.campos && existing.campos[f.key]) || "";
+    if(f.type==="select") return `<label>${esc(f.label)}</label><select data-f="${f.key}"><option value="">Selecciona</option>${f.options.map(o=>`<option value="${esc(o)}" ${val===o?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
     return f.type==="textarea"
       ? `<label>${esc(f.label)}</label><textarea data-f="${f.key}">${esc(val)}</textarea>`
       : `<label>${esc(f.label)}</label><input type="text" data-f="${f.key}" value="${esc(val)}">`;
@@ -726,15 +779,18 @@ async function openRegistroUnico(evaluacionId, codigo){
     const campos = {};
     sheet.querySelectorAll("[data-f]").forEach(el=>{ campos[el.dataset.f]=el.value; });
     closeModal();
+    let regId = existing?.id;
     if(existing){
       await persistEntity("registros_unicos", existing.id, "UPDATE", {campos});
       await patchCache("ev:"+evaluacionId+":reg:"+codigo, (cur)=>({...(cur||existing), campos}));
     } else {
-      const newRegId = newId();
+      const newRegId = newId(); regId = newRegId;
       await persistEntity("registros_unicos", newRegId, "CREATE", {evaluacion_id:evaluacionId, tipo_id:tipoId, campos});
       await patchCache("ev:"+evaluacionId+":reg:"+codigo, ()=>({id:newRegId, evaluacion_id:evaluacionId, tipo_id:tipoId, campos}));
       await patchCache("ev:"+evaluacionId+":single_flags", (rows)=>[...(rows||[]), {tipo_id:tipoId}]);
     }
+    if(codigo==="redes_perfil" && await ofrecerHallazgoRedes(evaluacionId, codigo, campos, "Perfil de redes sociales", "registro_unico_id", regId)) return;
+    if(state.screen==="resumen-evaluacion") renderResumenEvaluacion();
   };
 }
 
@@ -854,7 +910,7 @@ function openHallazgoLibreForm(existing, prefill){
       <label>Fundamento legal (opcional -- solo si de verdad existe uno)</label>
       <textarea data-f="fundamento" placeholder="Déjalo vacío si no hay fundamento normativo confirmado">${esc(existing?.fundamento||"")}</textarea>
       <label>Acción correctiva</label>
-      <textarea data-f="accion">${esc(existing?.accion||"")}</textarea>
+      <textarea data-f="accion">${esc(existing?.accion||prefill.accion||"")}</textarea>
       <div style="display:flex;gap:8px;margin-top:8px">
         <div style="flex:1"><label>Responsable</label><input type="text" data-f="responsable" value="${esc(existing?.responsable||"")}"></div>
         <div style="flex:1"><label>Fecha objetivo</label><input type="date" data-f="fecha_objetivo" value="${esc(existing?.fecha_objetivo||"")}"></div>
@@ -2584,7 +2640,7 @@ async function renderResumenEvaluacion(){
   // tiene redes ni sitio.
   const hayPublicidad = (ev.facts?.publicidad || []).length > 0;
   const seccionesPorNivel = INVENTORY_SECTIONS.filter(sec => sec.depth.includes(ev.nivel_checkup) && sec.areas.includes(dep.codigo));
-  const seccionesVisibles = seccionesPorNivel.filter(sec => sec.codigo!=="publicidad_captura" || hayPublicidad);
+  const seccionesVisibles = seccionesPorNivel.filter(sec => !["publicidad_captura","redes_perfil"].includes(sec.codigo) || hayPublicidad);
   const seccionesOmitidasPorNivel = INVENTORY_SECTIONS.filter(sec => !sec.depth.includes(ev.nivel_checkup));
   const pctCriterios = activos.length ? Math.round(100*contestados/activos.length) : 0;
 
@@ -2845,6 +2901,7 @@ async function renderDiagnosticoEvaluacion(){
       <div id="findings-list"></div>
     </div>
     <button class="btn btn-primary" id="btn-pdf" style="margin-bottom:10px">Generar PDF</button>
+    ${ev.nivel_checkup==="completo" ? `<button class="btn btn-ghost" id="btn-proto-mkt" style="margin-bottom:10px;border-width:2px;border-color:var(--gold-500)">📱 Protocolo de redes para marketing (PDF)</button>` : ""}
     ${ev.estatus!=="completado" ? `<button class="btn btn-ghost" id="btn-cerrar-eval" style="margin-bottom:20px">Cerrar evaluación</button>`
       : `<div class="empty-note" style="margin-bottom:20px">✅ Evaluación cerrada</div>`}
   `;
@@ -2928,12 +2985,164 @@ async function renderDiagnosticoEvaluacion(){
     renderDiagnosticoEvaluacion(); // refleja de inmediato el tachado/check y la barra de progreso
   }));
 
+  const bProto = document.getElementById("btn-proto-mkt");
+  if(bProto) bProto.onclick = async (e)=>{
+    const btn = e.target; btn.disabled=true; const t=btn.textContent; btn.textContent="Generando...";
+    try{ await generarProtocoloMkt(ev); }catch(err){ showError("No se pudo generar el protocolo: " + (err&&err.message?err.message:err)); }
+    btn.disabled=false; btn.textContent=t;
+  };
   document.getElementById("btn-pdf").onclick = async (e)=>{
     const btn = e.target; btn.disabled=true; btn.textContent="Generando...";
     try{ await generarPdfDiagnostico(state._diagCache, mode); }
     catch(err){ showError("No se pudo generar el PDF: " + (err&&err.message?err.message:err)); }
     btn.disabled=false; btn.textContent="Generar PDF";
   };
+}
+
+
+/* ------------------------- Protocolo de publicación en redes (solo check-up completo) -------------------------
+   Documento para el equipo de marketing, personalizado con los datos del médico y de la clínica y con
+   lo encontrado en la revisión de redes. Es una guía preventiva basada en la Ley General de Salud y su
+   Reglamento en Materia de Publicidad; no sustituye asesoría legal. */
+const PROTO_FRASES = [
+  ["Resultados garantizados", "Los resultados varían en cada paciente"],
+  ["Rejuvenece 10 años / te quita la edad", "Ayuda a mejorar la apariencia de líneas de expresión"],
+  ["Permanente / para siempre", "Duración aproximada según cada paciente; te lo explicamos en tu valoración"],
+  ["Sin dolor / sin riesgos / 100% seguro", "Procedimiento mínimamente invasivo; conoce sus riesgos en tu valoración médica"],
+  ["Cura el acné / elimina la celulitis / trata la flacidez", "Mejora la apariencia de la piel"],
+  ["Previene el envejecimiento", "Cuida la apariencia de tu piel"],
+  ["El mejor / el único / el #1", "Atención por médico con cédula profesional"],
+  ["Botox 2x1 / Ácido hialurónico en oferta", "Tratamiento para líneas de expresión / Tratamiento de relleno, previa valoración médica"],
+  ["Resultados inmediatos", "Algunos cambios se aprecian desde la primera sesión; varía en cada paciente"],
+];
+async function generarProtocoloMkt(ev){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión a internet la primera vez)."); return; }
+  const {jsPDF} = window.jspdf;
+  const datosEst = await getDatosEst(ev.expediente_id);
+  const tipoIds = await ensureTipoIds();
+  let perfil = {}, pubs = [];
+  try{
+    const r1 = await cachedRead("ev:"+ev.id+":reg:redes_perfil", ()=>sb.from("registros_unicos").select("*").eq("evaluacion_id", ev.id).eq("tipo_id", tipoIds["r:redes_perfil"]).maybeSingle());
+    perfil = (r1.data && r1.data.campos) || {};
+    const r2 = await cachedRead("ev:"+ev.id+":coll:publicidad_captura", ()=>sb.from("colecciones_items").select("*").eq("evaluacion_id", ev.id).eq("tipo_id", tipoIds["c:publicidad_captura"]).order("created_at"));
+    pubs = r2.data || [];
+  }catch(e){}
+  const fallas = [];
+  REDES_FALLAS.forEach(f=>{
+    const n = (f.bad.includes(perfil[f.k]) ? 1 : 0) + pubs.filter(p=>f.bad.includes((p.campos||{})[f.k])).length;
+    if(n) fallas.push({...f, n});
+  });
+  const clinica = datosEst.nombreComercial || "la clínica";
+  const medico = perfil.medicoNombre || datosEst.responsableSanitario || "[Nombre del médico]";
+  const inst = perfil.medicoInstitucion || "[Institución que expidió el título]";
+  const ced = perfil.medicoCedula || datosEst.cedulaProfesional || "[Cédula profesional]";
+  const esp = perfil.medicoEspecialidad ? `${perfil.medicoEspecialidad}${perfil.medicoCedulaEsp ? " · Céd. Esp. " + perfil.medicoCedulaEsp : ""}` : "";
+  const pie = `${medico} · ${inst} · Céd. Prof. ${ced}${esp ? " · " + esp : ""}`;
+
+  const doc = new jsPDF({unit:"pt", format:"letter"});
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+  const margin = 48, maxW = pageW - margin*2;
+  let y = margin;
+  const NAVY=[15,42,67], INK=[15,24,34], SOFT=[58,70,84], RED=[179,38,30], GREEN=[46,125,79];
+  const checkBreak = need=>{ if(y+need > pageH-margin){ doc.addPage(); y=margin; } };
+  const heading = (t)=>{ checkBreak(48); y+=6; doc.setFillColor(...NAVY); doc.roundedRect(margin, y-14, maxW, 24, 5, 5, "F"); doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.setTextColor(255,255,255); doc.text(t, margin+12, y+2); y+=24; doc.setTextColor(...INK); };
+  const body = (t,o)=>{ o=o||{}; doc.setFont("helvetica",o.bold?"bold":"normal"); doc.setFontSize(o.size||11); doc.setTextColor(...(o.color||INK));
+    doc.splitTextToSize(String(t||""), maxW-(o.indent||0)).forEach(line=>{ checkBreak(o.lh||15); doc.text(line, margin+(o.indent||0), y); y+=o.lh||15; }); };
+  const bullet = (t, color)=>{ const lines = doc.setFont("helvetica","normal").setFontSize(10.5).splitTextToSize(t, maxW-18); checkBreak(lines.length*14+4);
+    doc.setFillColor(...(color||NAVY)); doc.circle(margin+5, y-3.5, 2.3, "F"); doc.setTextColor(...INK); lines.forEach(l=>{ doc.text(l, margin+16, y); y+=14; }); y+=3; };
+
+  drawPortadaPdf(doc, {titulo:"Protocolo de publicación en redes sociales", subtitulo:"Guía para el equipo de marketing", cliente:clinica,
+    detalle:`Derivado del Check-up Regulatorio del ${ev.fecha_visita||"—"}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
+
+  doc.setFillColor(...NAVY); doc.rect(0,0,pageW,110,"F");
+  try{ doc.addImage(LOGO_MARK_B64, "PNG", pageW-margin-40, 14, 44, 44); }catch(e){}
+  doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(255,255,255); doc.text("Protocolo de publicación en redes", margin, 52);
+  doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(230,230,225); doc.text(clinica, margin, 74);
+  doc.setFontSize(10); doc.setTextColor(216,193,150); doc.text("Elaborado por: Saúl Flores | Elementos Financieros", margin, 92);
+  y = 140;
+  body(`Este protocolo indica cómo publicar los servicios de ${clinica} en redes sociales cuidando la regulación sanitaria. Aplica a todo el contenido que promueva un tratamiento, servicio, precio, promoción o resultado, sin importar quién lo publique: la clínica, una agencia o una influencer.`, {size:11, lh:16});
+
+  heading("1. Pie obligatorio en cada publicación promocional");
+  body("Copiar y pegar al final del texto o dentro de la imagen de cada publicación que promueva un servicio, y también en la biografía:", {size:10.5});
+  y+=4; checkBreak(48);
+  const pl = doc.setFont("helvetica","bold").setFontSize(11).splitTextToSize(pie, maxW-24);
+  doc.setFillColor(241,231,210); doc.roundedRect(margin, y-12, maxW, pl.length*15+16, 5, 5, "F");
+  doc.setTextColor(...NAVY); pl.forEach(l=>{ doc.text(l, margin+12, y+2); y+=15; }); y+=14;
+  if(pie.includes("[")) body("Completar los datos entre corchetes con la información del médico antes de usar el pie.", {size:9.5, color:RED});
+  body("Fundamento: Reglamento de la Ley General de Salud en Materia de Publicidad, art. 19.", {size:9, color:SOFT});
+
+  heading("2. Permiso o aviso de publicidad");
+  const permiso = perfil.chk_permiso || "No verificado";
+  body(`Estatus encontrado en la visita: ${permiso}${perfil.permisoNumero ? " · No. " + perfil.permisoNumero : ""}.`, {bold:true, size:10.5});
+  bullet("La publicidad de la clínica y de sus tratamientos estéticos requiere permiso de COFEPRIS; el médico que se anuncia de forma individual presenta aviso.");
+  bullet("Mientras no se cuente con el permiso o aviso, no pautar (pagar anuncios de) tratamientos ni contratar influencers para promoverlos.");
+  bullet("Guardar copia del permiso o aviso y de cada publicación difundida por si la autoridad los solicita.");
+
+  heading("3. Cómo hablar de los tratamientos: evitar y usar en su lugar");
+  body("Los servicios estéticos solo pueden anunciar resultados reales y comprobables, y nunca atribuirse propiedades para curar, prevenir o tratar (arts. 63 y 64). Ejemplos:", {size:10.5});
+  y+=4;
+  const colW = (maxW-12)/2;
+  checkBreak(24);
+  doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(...RED); doc.text("EVITAR", margin, y); doc.setTextColor(...GREEN); doc.text("USAR EN SU LUGAR", margin+colW+12, y); y+=8;
+  PROTO_FRASES.forEach(([no, si])=>{
+    const a = doc.setFont("helvetica","normal").setFontSize(10).splitTextToSize(no, colW), b = doc.splitTextToSize(si, colW);
+    const h = Math.max(a.length, b.length)*13 + 10;
+    checkBreak(h+2);
+    doc.setDrawColor(230,230,226); doc.line(margin, y, pageW-margin, y); y+=13;
+    doc.setTextColor(...RED); a.forEach((l,i)=>doc.text(l, margin, y+i*13));
+    doc.setTextColor(...INK); b.forEach((l,i)=>doc.text(l, margin+colW+12, y+i*13));
+    y += h-13;
+  });
+  y+=6;
+  body("Los textos sugeridos son ejemplos de redacción prudente; cada afirmación debe poder respaldarse.", {size:9, color:SOFT});
+
+  heading("4. Leyenda de riesgos");
+  body("Incluir en las publicaciones de tratamientos una leyenda como la siguiente (art. 65):", {size:10.5});
+  y+=2; body("«Todo procedimiento implica riesgos. Consulta contraindicaciones y efectos secundarios en tu valoración médica.»", {bold:true, size:10.5, color:NAVY});
+
+  heading("5. Antes y después");
+  bullet("Solo fotos reales de pacientes de la clínica, sin filtros ni edición, con la misma luz, ángulo y distancia.");
+  bullet("Consentimiento por escrito del paciente para usar su imagen; si no autoriza su rostro, recortarlo.");
+  bullet("Indicar número de sesiones y tiempo transcurrido, y que los resultados varían en cada paciente.");
+
+  heading("6. Medicamentos y marcas");
+  bullet("No usar nombres comerciales de medicamentos en publicaciones (por ejemplo Botox); hablar del tratamiento, no del producto.");
+  bullet("No vender ni ofrecer medicamentos o productos de aplicación por redes sociales o mensajes.");
+
+  heading("7. Influencers, testimonios y mensajes directos");
+  bullet("El contenido de influencers y testimonios pagados cuenta como publicidad de la clínica: debe cumplir todo este protocolo.");
+  bullet("Entregarles el texto aprobado (con el pie del punto 1) y revisar el contenido antes de que se publique.");
+  bullet("Por mensaje directo o WhatsApp no se diagnostica ni se receta: se invita a una valoración médica.");
+
+  if(fallas.length){
+    heading("8. Lo que encontramos en su revisión");
+    body(`En la revisión de ${pubs.length} publicación(es) y del perfil se detectó:`, {size:10.5});
+    fallas.forEach(f=> bullet(`${f.d}${f.n>1 ? ` (${f.n} casos)` : ""}. Qué hacer: ${f.a}`, RED));
+  }
+
+  heading(fallas.length ? "9. Checklist antes de publicar" : "8. Checklist antes de publicar");
+  ["¿Lleva el pie con nombre del médico, institución y cédula?","¿Evita promesas (garantizado, permanente, «años menos»)?","¿Evita decir que cura, previene o trata?","¿Evita nombres comerciales de medicamentos y venta por redes?","¿Incluye la leyenda de riesgos?","Si usa antes y después: ¿es real, sin edición y con consentimiento?","¿El servicio anunciado lo ofrece realmente la clínica?","¿Lo aprobó el médico o el responsable sanitario?"].forEach(t=>{
+    const lines = doc.setFont("helvetica","normal").setFontSize(10.5).splitTextToSize(t, maxW-22); checkBreak(lines.length*14+4);
+    doc.setDrawColor(...NAVY); doc.rect(margin, y-9, 10, 10); doc.setTextColor(...INK); lines.forEach(l=>{ doc.text(l, margin+18, y); y+=14; }); y+=3;
+  });
+
+  heading(fallas.length ? "10. Flujo de aprobación" : "9. Flujo de aprobación");
+  bullet("Marketing redacta la publicación con este protocolo.");
+  bullet("El médico o el responsable sanitario la revisa y aprueba.");
+  bullet("Se publica y se guarda una captura con su fecha (archivo de publicidad).");
+
+  y+=8; checkBreak(40);
+  body("Guía preventiva elaborada con base en la Ley General de Salud y el Reglamento de la Ley General de Salud en Materia de Publicidad. No sustituye asesoría legal ni una resolución de la autoridad sanitaria.", {size:9, color:SOFT, lh:12});
+
+  const fileName = `PROTOCOLO-REDES-${(clinica).normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9]+/g,"-")}.pdf`;
+  const blob = doc.output("blob");
+  try{
+    const file = new File([blob], fileName, {type:"application/pdf"});
+    if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:fileName}); return; }
+  }catch(shareErr){ console.warn("Share falló, uso descarga directa:", shareErr); }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href=url; a.download=fileName; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 30000);
 }
 
 function drawGaugeSvg(percent, color, size){
