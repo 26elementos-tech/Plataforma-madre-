@@ -1999,6 +1999,163 @@ async function renderExpediente(){
   });
 }
 
+
+/* ------------------------- Índice de la carpeta de cumplimiento -------------------------
+   PDF por expediente: todos los DOCUMENTOS que le aplican (sacados de los criterios de su última
+   evaluación de COFEPRIS, STPS y Protección Civil), con estatus, vigencia, sección de la carpeta
+   física y nombre del archivo en la carpeta digital. Los hallazgos corregidos/verificados en
+   seguimientos cuentan como "Lo tiene". */
+const CARPETA_DOC_RE = /(aviso|licencia|permiso|t[ií]tulo|c[ée]dula|contrato|manifiesto|registro|bit[aá]cora|comprobante|constancia|programa|manual|expediente|consentimiento|recetario|certific|acta|dictamen|archivo|documenta|p[oó]liza|plan |reglamento|estudio|dict[aá]men|capacitaci)/i;
+const CARPETA_EXCLUYE_RE = /^(congruencia|publicidad sin|publicidad de profesionales|no se ingieren)/i;
+function carpetaVigencia(txt){
+  const t = (txt||"").toLowerCase();
+  if(/365 d[ií]as|una vez al a[nñ]o|anual/.test(t)) return "Renovar cada año";
+  const m = t.match(/cada (\d+) meses/); if(m) return `Cada ${m[1]} meses`;
+  const a = t.match(/(\d+) a[nñ]os/); if(a) return `Conservar ${a[1]} años`;
+  if(/vigente|vigencia/.test(t)) return "Mantener vigente";
+  return "Permanente / mantener actualizado";
+}
+function carpetaSlug(t, n){ return (t||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9 ]+/g," ").trim().split(/\s+/).slice(0, n||6).join("-"); }
+async function generarIndiceCarpeta(exp, evalsPorArea){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión a internet la primera vez)."); return; }
+  if(!navigator.onLine){ showError("Generar el índice necesita conexión para reunir las evaluaciones."); return; }
+  const {jsPDF} = window.jspdf;
+  const datosEst = await getDatosEst(exp.id);
+  const DEP_LABEL = {cofepris:"COFEPRIS", stps:"STPS", proteccion_civil:"Protección Civil"};
+  const secciones = []; // {titulo, docs:[]}
+  const todasEvIds = Object.values(evalsPorArea).flat().map(e=>e.id);
+  let corregidos = new Set();
+  if(todasEvIds.length){
+    const { data: hs } = await sb.from("hallazgos").select("criterio_id,estatus_accion").in("evaluacion_id", todasEvIds).in("estatus_accion", ["corregido","verificado"]);
+    corregidos = new Set((hs||[]).map(h=>h.criterio_id).filter(Boolean));
+  }
+  let fechaBase = null;
+  for(const dep of ["cofepris","stps","proteccion_civil"]){
+    const base = (evalsPorArea[dep]||[]).filter(e=>e.tipo_visita!=="seguimiento").sort((a,b)=>(b.fecha_visita||"").localeCompare(a.fecha_visita||""))[0];
+    if(!base) continue;
+    if(!fechaBase || (base.fecha_visita||"") > fechaBase) fechaBase = base.fecha_visita;
+    const [snapR, respR] = await Promise.all([
+      sb.from("evaluacion_criterios_snapshot").select("criterio_id,modulo,requisito,descripcion,evidencia_esperada").eq("evaluacion_id", base.id),
+      sb.from("respuestas_criterio").select("criterio_id,estatus").eq("evaluacion_id", base.id),
+    ]);
+    const resp = {}; (respR.data||[]).forEach(r=>{ resp[r.criterio_id] = r.estatus; });
+    const porModulo = {};
+    (snapR.data||[]).forEach(c=>{
+      if(!CARPETA_DOC_RE.test(c.requisito) || CARPETA_EXCLUYE_RE.test(c.requisito.trim())) return;
+      const st = resp[c.criterio_id];
+      if(st==="no_aplica") return;
+      let estatus = st==="cumple" ? "Lo tiene" : st==="parcial" ? "Incompleto" : st==="no_cumple" ? "Falta" : "Por verificar";
+      if(estatus!=="Lo tiene" && corregidos.has(c.criterio_id)) estatus = "Lo tiene (corregido)";
+      const txt = c.requisito + " " + (c.descripcion||"");
+      (porModulo[c.modulo] = porModulo[c.modulo] || []).push({doc:c.requisito, estatus, vigencia:carpetaVigencia(txt), vista:/a la vista|visible/i.test(txt)});
+    });
+    Object.keys(porModulo).sort().forEach(m=> secciones.push({titulo: m, dep: DEP_LABEL[dep], docs: porModulo[m]}));
+  }
+  if(!secciones.length){ showError("Este expediente aún no tiene evaluaciones regulatorias con criterios contestados."); return; }
+
+  const doc = new jsPDF({unit:"pt", format:"letter"});
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
+  const margin = 48, maxW = pageW - margin*2;
+  let y = margin;
+  const NAVY=[15,42,67], INK=[15,24,34], SOFT=[58,70,84];
+  const ST_COLOR = {"Lo tiene":[46,125,79], "Lo tiene (corregido)":[46,125,79], "Incompleto":[184,134,11], "Falta":[179,38,30], "Por verificar":[120,130,140]};
+  const checkBreak = need=>{ if(y+need > pageH-margin){ doc.addPage(); y=margin; } };
+  const body = (t,o)=>{ o=o||{}; doc.setFont("helvetica",o.bold?"bold":"normal"); doc.setFontSize(o.size||10.5); doc.setTextColor(...(o.color||INK));
+    doc.splitTextToSize(String(t||""), maxW-(o.indent||0)).forEach(line=>{ checkBreak(o.lh||14); doc.text(line, margin+(o.indent||0), y); y+=o.lh||14; }); };
+  const heading = (t)=>{ checkBreak(40); doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.setTextColor(...NAVY); doc.text(t, margin, y); y+=18; };
+  const hoy = new Date().toISOString().slice(0,10);
+  const clinica = datosEst.nombreComercial || exp.nombre_expediente || "Establecimiento";
+
+  drawPortadaPdf(doc, {titulo:"Índice de la carpeta de cumplimiento", subtitulo:"Documentos regulatorios del establecimiento", cliente:clinica,
+    detalle:`Con base en el check-up del ${fechaBase||"—"} · Actualizado al ${hoy}`, detalle2:[datosEst.domicilio, datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
+
+  doc.setFillColor(...NAVY); doc.rect(0,0,pageW,110,"F");
+  try{ doc.addImage(LOGO_MARK_B64, "PNG", pageW-margin-40, 14, 44, 44); }catch(e){}
+  doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(255,255,255); doc.text("Carpeta de cumplimiento", margin, 52);
+  doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(230,230,225); doc.text(clinica, margin, 74);
+  doc.setFontSize(10); doc.setTextColor(216,193,150); doc.text("Elaborado por: Saúl Flores | Elementos Financieros", margin, 92);
+  y = 138;
+  datosEstLineas(datosEst).forEach(l=>body(l, {size:9.5, color:SOFT, lh:13}));
+  y += 6;
+  body("Este índice ordena los documentos que el establecimiento debe tener y conservar. Úselo para armar dos carpetas con la misma estructura:", {size:10.5});
+  y += 2;
+  ["Carpeta física: un separador por sección, en el orden y con los códigos de este índice.","Carpeta digital: una carpeta por sección y cada documento escaneado con el nombre de archivo indicado.","Revisión mensual: actualizar estatus y vigencias; tenerla lista para una verificación presencial o documental."].forEach(t=>{
+    const l = doc.setFont("helvetica","normal").setFontSize(10).splitTextToSize(t, maxW-16); checkBreak(l.length*13+3);
+    doc.setFillColor(...NAVY); doc.circle(margin+4, y-3.5, 2, "F"); doc.setTextColor(...INK); l.forEach(x=>{ doc.text(x, margin+14, y); y+=13; }); y+=2;
+  });
+  y += 8;
+  // Resumen
+  const todos = secciones.flatMap(s=>s.docs);
+  const cuenta = k => todos.filter(d=>d.estatus===k || (k==="Lo tiene" && d.estatus==="Lo tiene (corregido)")).length;
+  const cards = [["Lo tiene", cuenta("Lo tiene")], ["Incompleto", cuenta("Incompleto")], ["Falta", cuenta("Falta")], ["Por verificar", cuenta("Por verificar")]];
+  const cw = (maxW - 30)/4;
+  checkBreak(64);
+  cards.forEach(([k,n],i)=>{ const x = margin + i*(cw+10);
+    doc.setFillColor(246,246,243); doc.roundedRect(x, y, cw, 52, 6, 6, "F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(20); doc.setTextColor(...ST_COLOR[k]); doc.text(String(n), x+cw/2, y+26, {align:"center"});
+    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...SOFT); doc.text(k, x+cw/2, y+42, {align:"center"}); });
+  y += 70;
+  // A la vista
+  const vista = todos.filter(d=>d.vista);
+  if(vista.length){
+    heading("Documentos que deben estar a la vista del público");
+    vista.forEach(d=> body("• " + d.doc, {size:10, lh:13}));
+    y += 8;
+  }
+  // Secciones
+  heading(`Índice de documentos (${todos.length})`);
+  secciones.forEach((s, si)=>{
+    checkBreak(56);
+    doc.setFillColor(...NAVY); doc.roundedRect(margin, y-12, maxW, 22, 4, 4, "F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(255,255,255);
+    doc.text(`Sección ${si+1} · ${s.titulo}`, margin+10, y+3);
+    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(216,193,150); doc.text(s.dep, pageW-margin-10, y+3, {align:"right"});
+    y += 24;
+    s.docs.forEach((d, di)=>{
+      const code = `${si+1}.${di+1}`;
+      const archivo = `${String(si+1).padStart(2,"0")}-${String(di+1).padStart(2,"0")}_${carpetaSlug(d.doc)}.pdf`;
+      const pillW = 96;
+      const dl = doc.setFont("helvetica","bold").setFontSize(10).splitTextToSize(d.doc, maxW - 36 - pillW - 8);
+      const h = dl.length*13 + 16;
+      checkBreak(h + 6);
+      doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(...NAVY); doc.text(code, margin, y);
+      doc.setTextColor(...INK); dl.forEach((t,i)=>doc.text(t, margin+36, y+i*13));
+      doc.setFillColor(...ST_COLOR[d.estatus]); doc.roundedRect(pageW-margin-pillW, y-10, pillW, 15, 7.5, 7.5, "F");
+      doc.setFontSize(8.5); doc.setTextColor(255,255,255); doc.text(d.estatus, pageW-margin-pillW/2, y, {align:"center"});
+      y += dl.length*13;
+      doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...SOFT);
+      doc.text(`${d.vigencia}  ·  Archivo: ${archivo}`, margin+36, y);
+      y += 7; doc.setDrawColor(232,232,228); doc.line(margin, y, pageW-margin, y); y += 13;
+    });
+    y += 6;
+  });
+  // Estructura digital
+  heading("Estructura de la carpeta digital");
+  body(`Carpeta principal: Cumplimiento_${carpetaSlug(clinica,4)}`, {bold:true, size:10});
+  secciones.forEach((s,si)=> body(`   ${String(si+1).padStart(2,"0")}_${carpetaSlug(s.titulo,5)}`, {size:10, lh:13}));
+  body("Guardarla en una nube de la clínica (no en el celular personal de alguien), con acceso restringido y respaldo.", {size:9.5, color:SOFT, lh:13});
+  y += 10;
+  // Control de revisiones
+  heading("Control de revisiones");
+  checkBreak(30);
+  const cols = [["Fecha", 90], ["Revisó", 150], ["Observaciones", maxW-240]];
+  let x = margin; doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.setTextColor(...SOFT);
+  cols.forEach(([t,w])=>{ doc.text(t, x+4, y); x+=w; }); y += 6;
+  for(let i=0;i<8;i++){ checkBreak(22); doc.setDrawColor(200,200,195); doc.rect(margin, y, maxW, 20); let xx = margin; cols.slice(0,-1).forEach(([,w])=>{ xx+=w; doc.line(xx, y, xx, y+20); }); y += 20; }
+  y += 14;
+  body("Índice preventivo elaborado con base en los criterios regulatorios aplicables al establecimiento. No sustituye una visita de verificación ni una resolución de la autoridad.", {size:8.5, color:SOFT, lh:11});
+
+  const fileName = `CARPETA-CUMPLIMIENTO-${carpetaSlug(clinica,5)}-${hoy}.pdf`;
+  const blob = doc.output("blob");
+  try{
+    const file = new File([blob], fileName, {type:"application/pdf"});
+    if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:fileName}); return; }
+  }catch(shareErr){ console.warn("Share falló, uso descarga directa:", shareErr); }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href=url; a.download=fileName; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 30000);
+}
+
 function renderTabRegulatorio(body, exp, porArea, avance){
   const areas = REG_AREAS.slice();
   if(porArea.otras.length) areas.push({codigo:"otras", nombre:"Sin clasificar", icon:"📁", sub:"Evaluaciones aún sin área (se acomodan al sincronizar)"});
@@ -2053,6 +2210,16 @@ function renderTabRegulatorio(body, exp, porArea, avance){
     if(bSeg) bSeg.onclick = () => iniciarVisitaSeguimiento(exp, lista);
     body.appendChild(card);
   });
+  const hayEvals = ["cofepris","stps","proteccion_civil"].some(k=>(porArea[k]||[]).length);
+  if(hayEvals){
+    const bc = document.createElement("button");
+    bc.className = "action-btn"; bc.style.background = "var(--navy-800)"; bc.style.marginTop = "6px";
+    bc.innerHTML = "<span>🗂 Índice de la carpeta de cumplimiento (PDF)</span><span>→</span>";
+    bc.onclick = async () => { const t = bc.innerHTML; bc.disabled = true; bc.innerHTML = "<span>Generando…</span>";
+      try{ await generarIndiceCarpeta(exp, porArea); }catch(err){ showError("No se pudo generar el índice: " + (err&&err.message?err.message:err)); }
+      bc.disabled = false; bc.innerHTML = t; };
+    body.appendChild(bc);
+  }
 }
 
 function renderModulosProximos(titulo, sub, mods){
