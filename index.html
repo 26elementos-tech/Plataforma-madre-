@@ -1530,6 +1530,8 @@ async function render(){
   if(state.screen==="seguimiento-visita") return renderSeguimientoVisita();
   if(state.screen==="op-wizard") return renderOpWizard();
   if(state.screen==="exp-datos") return renderExpDatos();
+  if(state.screen==="fin-wizard") return renderFinWizard();
+  if(state.screen==="fin-resultado") return renderFinResultado();
   if(state.screen==="op-resultado") return renderOpResultado();
 }
 
@@ -2156,6 +2158,240 @@ async function generarIndiceCarpeta(exp, evalsPorArea){
   setTimeout(()=>URL.revokeObjectURL(url), 30000);
 }
 
+
+/* ------------------------- Índice de carpetas por dependencia -------------------------
+   Sale de CADA check-up (COFEPRIS, STPS o Protección Civil) con SOLO las carpetas físicas de esa
+   dependencia. Cada documento se liga a criterios (ids): si ninguno aplica a la clínica, no aparece;
+   "siempre" = se muestra aunque el check-up no lo evalúe (Por verificar); "rec" = buena práctica
+   (Recomendado), no requisito. Estatus tomado de las respuestas y de correcciones en seguimientos. */
+const CARPETAS_DEP = {
+  cofepris: {label:"COFEPRIS", carpetas:[
+    {t:"Regulatoria", p:"Los documentos que acreditan que el establecimiento puede operar.", items:[
+      {t:"Aviso de funcionamiento", ids:["m1-01","hosp-01"], siempre:true, v:"Permanente; actualizar ante cambios"},
+      {t:"Aviso de responsable sanitario", ids:["m1-02"], siempre:true, v:"Permanente; actualizar si cambia el responsable"},
+      {t:"Aviso de modificación (cambio de domicilio, responsable o actividades)", ids:["m1-05"]},
+      {t:"Licencia sanitaria (cuando aplique)", ids:["m1-03","est-01","est-02","est-03"], v:"Mantener vigente"},
+      {t:"Permiso sanitario de construcción", ids:["hosp-03"]},
+      {t:"Tarjeta de control sanitario del prestador", ids:["mb-01"], v:"Mantener vigente"},
+      {t:"Título y cédula profesional del responsable sanitario (copias; originales a la vista)", ids:["m2-01","m2-02","est-19"], siempre:true},
+      {t:"Cédula de especialidad (si se anuncia o opera como especialidad)", ids:["m2-03"]},
+      {t:"Contrato vigente de recolección de RPBI con empresa autorizada por SEMARNAT", ids:["m3-03"], v:"Mantener vigente"},
+      {t:"Manifiestos de entrega, transporte y recepción de RPBI", ids:["m3-04"], v:"Conservar 5 años"},
+      {t:"Registro como generador de RPBI ante SEMARNAT", ids:["m3-05"]},
+      {t:"Bitácora de generación de RPBI", ids:["m3-01"], v:"Mantener al día"},
+      {t:"Constancia de manejo de RPBI", ids:["mb-04"], v:"Mantener vigente"},
+      {t:"Contrato de fumigadora y certificado de la última fumigación", ids:["cons-05","est-25","hosp-05"], siempre:true, v:"Renovar cada año (menos de 365 días)"},
+      {t:"Aviso o permiso de publicidad ante COFEPRIS", ids:["m4-02"]},
+      {t:"Croquis del establecimiento con áreas y cabinas delimitadas", siempre:true, rec:true},
+      {t:"Uso de suelo (municipio o alcaldía)", siempre:true, rec:true, n:"Trámite municipal; Protección Civil también lo pide."},
+      {t:"Constancia de situación fiscal (SAT)", siempre:true, rec:true, n:"Identifica al establecimiento; no es requisito de COFEPRIS."},
+    ]},
+    {t:"Acreditación del personal", p:"Quién atiende y con qué preparación.", items:[
+      {t:"Médico responsable: título, cédula y certificaciones", ids:["m2-01","m2-02"], siempre:true},
+      {t:"Médicos alternos: título, cédula, cédula de especialidad y certificación vigente", ids:["m2-04","est-18","est-08","est-16"], siempre:true},
+      {t:"Responsable sanitario con especialidad acorde a las actividades", ids:["est-07","hosp-02"]},
+      {t:"Terapeutas, cosmetólogas y técnicos: certificados, diplomados y capacitaciones", ids:["m2-04","est-18"], siempre:true},
+      {t:"Constancia de primeros auxilios y de higiene y asepsia", ids:["mb-03"], v:"Mantener vigente"},
+      {t:"Comprobante de vacunación (Hepatitis B y Tétanos)", ids:["mb-05"], v:"Mantener vigente"},
+      {t:"Personal administrativo: identificación y función (no opera procedimientos)", siempre:true, rec:true},
+      {t:"Relación del personal: nombre, puesto, función y horario", siempre:true, rec:true},
+    ]},
+    {t:"Protocolos y formatos clínicos", p:"Cómo se atiende y cómo se documenta. Los expedientes de pacientes se archivan aparte, con acceso restringido.", items:[
+      {t:"Manual de procedimientos: protocolo de cada tratamiento, metodología, insumos y productos", ids:["est-24","mb-02","hosp-09"], siempre:true},
+      {t:"Formatos de expediente clínico en blanco (historia clínica, notas) conforme a la NOM-004", ids:["m6-01","m6-02"], siempre:true},
+      {t:"Formatos de consentimiento informado por procedimiento", ids:["m6-03","dent-09","mb-07"], siempre:true},
+      {t:"Odontograma y periodontograma", ids:["dent-08"]},
+      {t:"Cuestionario previo al procedimiento", ids:["mb-06"]},
+      {t:"Aviso de privacidad", siempre:true, n:"Obligatorio por la ley de protección de datos personales, no por COFEPRIS."},
+      {t:"Muestra del recetario impreso con datos completos", ids:["cons-02","est-20"]},
+      {t:"Registro diario de pacientes", ids:["cons-01","est-17"], v:"Mantener al día"},
+      {t:"Bitácora encuadernada y foliada de actividades y usuarios", ids:["mb-09"], v:"Conservar 2 años"},
+      {t:"Certificado SIRES del sistema (si el expediente es electrónico)", ids:["est-21"], v:"Mantener vigente"},
+      {t:"Lista de teléfonos de emergencia (copia; original a la vista)", ids:["dent-01"]},
+    ]},
+    {t:"Equipos, insumos, bitácoras y mantenimiento", p:"Con qué se trabaja y cómo se mantiene.", items:[
+      {t:"Registros sanitarios de los equipos médicos", siempre:true},
+      {t:"Manuales de los equipos en español", ids:["est-26"], siempre:true},
+      {t:"Facturas o recibos de los equipos", siempre:true, rec:true},
+      {t:"Bitácora de mantenimiento mensual y de mantenimiento preventivo o calibración, firmadas por el técnico", ids:["est-26","est-10","hosp-06"], siempre:true, n:"Calibración bimestral recomendada; si el fabricante indica otra frecuencia, aplica la del fabricante."},
+      {t:"Bitácora de limpieza y desinfección de la clínica (incluye baños)", ids:["cons-06","est-11"], siempre:true, v:"Mantener al día"},
+      {t:"Bitácora de cloración del agua (cloro residual)", ids:["cons-08"], v:"Mantener al día"},
+      {t:"Comprobante de limpieza y mantenimiento de cisterna o tinaco", ids:["cons-07"], v:"Renovar cada año"},
+      {t:"Evidencia de capacitación del personal en el uso de los equipos", siempre:true, rec:true},
+      {t:"Facturas de compra de medicamentos e insumos de distribuidor autorizado, con registro sanitario", ids:["cons-04","est-23"], siempre:true},
+      {t:"Bitácora de medicamentos multidosis (paciente, fecha, producto, lote, caducidad y dosis)", ids:["est-23"], v:"Mantener al día"},
+      {t:"Control de caducidades y lista del botiquín de urgencias", ids:["m5-05","cons-04","est-23"], siempre:true, v:"Revisar cada mes"},
+      {t:"Bitácora de esterilización y testigos biológicos", ids:["dent-03","dent-05"], v:"Testigos cada 2 meses"},
+      {t:"Registro de recolección de mercurio y amalgama", ids:["dent-10"]},
+    ]},
+  ]},
+  stps: {label:"STPS", carpetas:[
+    {t:"Relación laboral", p:"La formalidad de cada trabajador.", items:[
+      {t:"Contratos laborales por escrito de cada trabajador", ids:["stps-13"]},
+      {t:"Altas del personal ante el IMSS", ids:["stps-15"]},
+      {t:"Recibos de nómina u honorarios", ids:["stps-16"]},
+      {t:"Control de asistencia y jornada laboral", ids:["stps-14"], v:"Mantener al día"},
+      {t:"Permisos especiales del personal", ids:["stps-22"]},
+      {t:"Acta de la Comisión Mixta para el Reparto de Utilidades (PTU)", ids:["stps-20"]},
+      {t:"Declaración anual del ejercicio fiscal anterior", ids:["stps-21"], v:"Renovar cada año"},
+    ]},
+    {t:"Capacitación", p:"Formatos de capacitación y adiestramiento.", items:[
+      {t:"DC-1 · Acta de la Comisión Mixta de Capacitación, Adiestramiento y Productividad", ids:["stps-17"]},
+      {t:"DC-2 · Programa de capacitación registrado", ids:["stps-18"], v:"Actualizar cada año"},
+      {t:"DC-3 · Constancias de competencias por trabajador", ids:["stps-19"]},
+      {t:"DC-5 · Registro de agentes capacitadores externos", ids:["stps-23"]},
+    ]},
+    {t:"Seguridad e higiene", p:"Las normas de seguridad que aplican al centro de trabajo.", items:[
+      {t:"Acta de constitución y recorridos de la Comisión de Seguridad e Higiene", ids:["stps-08"], v:"Recorridos periódicos"},
+      {t:"Programa de revisión de edificios, locales e instalaciones", ids:["stps-01"]},
+      {t:"Estudio de riesgo de incendio y programa de prevención", ids:["stps-02"]},
+      {t:"Registros de revisión de instalaciones eléctricas", ids:["stps-10"]},
+      {t:"Estudio de iluminación", ids:["stps-09"]},
+      {t:"Política y evaluación de factores de riesgo psicosocial (NOM-035)", ids:["stps-12"]},
+      {t:"Hojas de datos de seguridad de sustancias químicas", ids:["stps-07"]},
+      {t:"Reconocimiento y control de agentes químicos", ids:["stps-05"]},
+      {t:"Medidas de seguridad para radiaciones no ionizantes (láser, IPL)", ids:["stps-06"]},
+      {t:"Seguridad en maquinaria y equipo", ids:["stps-03"]},
+      {t:"Manejo y almacenamiento de materiales", ids:["stps-04"]},
+      {t:"Diagnóstico y programa de servicios preventivos de seguridad y salud", ids:["stps-11"]},
+    ]},
+  ]},
+  proteccion_civil: {label:"Protección Civil", carpetas:[
+    {t:"Programa Interno", p:"El documento rector de Protección Civil del establecimiento.", items:[
+      {t:"Programa Interno de Protección Civil registrado", ids:["pc-02"], v:"Actualizar cada año"},
+      {t:"Carta de Corresponsabilidad (bajo riesgo)", ids:["pc-09"], v:"Mantener vigente"},
+      {t:"Dictamen de Protección Civil del año anterior", ids:["pc-08"]},
+      {t:"Uso de suelo", siempre:true, rec:true},
+      {t:"Planos o croquis con rutas de evacuación y punto de reunión", siempre:true, rec:true},
+    ]},
+    {t:"Organización y simulacros", p:"Quién responde en una emergencia y cómo se practica.", items:[
+      {t:"Acta de constitución de la Unidad Interna de Protección Civil", ids:["pc-01"]},
+      {t:"Integración de brigadas y constancias de capacitación", ids:["pc-03"]},
+      {t:"Actas o evidencias de simulacros", ids:["pc-06"], v:"Al menos 2 al año"},
+      {t:"Directorio de emergencias", siempre:true, rec:true},
+    ]},
+    {t:"Equipos e instalaciones", p:"Lo que protege físicamente al establecimiento.", items:[
+      {t:"Comprobantes de recarga y mantenimiento de extintores", ids:["pc-05"], v:"Mantener vigente"},
+      {t:"Programa anual de mantenimiento de instalaciones", ids:["pc-07"], v:"Actualizar cada año"},
+      {t:"Evidencia fotográfica de la señalización", ids:["pc-04"]},
+      {t:"Bitácoras de revisión eléctrica y de gas (si aplica)", siempre:true, rec:true},
+    ]},
+  ]},
+};
+async function generarIndiceCarpetaDep(ev){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión a internet la primera vez)."); return; }
+  if(!navigator.onLine){ showError("Generar el índice necesita conexión."); return; }
+  const {jsPDF} = window.jspdf;
+  const [snapR, respR, segR] = await Promise.all([
+    sb.from("evaluacion_criterios_snapshot").select("criterio_id").eq("evaluacion_id", ev.id),
+    sb.from("respuestas_criterio").select("criterio_id,estatus").eq("evaluacion_id", ev.id),
+    sb.from("evaluaciones").select("id").eq("evaluacion_base_id", ev.id),
+  ]);
+  const enSnap = new Set((snapR.data||[]).map(x=>x.criterio_id));
+  const ids = [...enSnap];
+  const dep = ids.some(i=>i.startsWith("pc-")) ? "proteccion_civil" : ids.some(i=>i.startsWith("stps-")) ? "stps" : "cofepris";
+  const conf = CARPETAS_DEP[dep];
+  const resp = {}; (respR.data||[]).forEach(r=>{ resp[r.criterio_id] = r.estatus; });
+  const evIds = [ev.id, ...((segR.data||[]).map(x=>x.id))];
+  const { data: hs } = await sb.from("hallazgos").select("criterio_id,estatus_accion").in("evaluacion_id", evIds).in("estatus_accion", ["corregido","verificado"]);
+  const corregidos = new Set((hs||[]).map(h=>h.criterio_id).filter(Boolean));
+  const ORDEN = {"Falta":0, "Incompleto":1, "Por verificar":2, "Lo tiene":3};
+  const carpetas = conf.carpetas.map(cp=>({...cp, docs: cp.items.map(it=>{
+    const aplican = (it.ids||[]).filter(i=>enSnap.has(i));
+    if(!aplican.length && !it.siempre) return null;
+    const naTodos = aplican.length && aplican.every(i=>resp[i]==="no_aplica");
+    if(naTodos) return null;
+    let estatus;
+    if(!aplican.length) estatus = it.rec ? "Recomendado" : "Por verificar";
+    else {
+      const sts = aplican.filter(i=>resp[i]!=="no_aplica").map(i=>{
+        const s = resp[i]; let e = s==="cumple" ? "Lo tiene" : s==="parcial" ? "Incompleto" : s==="no_cumple" ? "Falta" : "Por verificar";
+        if(e!=="Lo tiene" && corregidos.has(i)) e = "Lo tiene";
+        return e; });
+      estatus = sts.sort((a,b)=>ORDEN[a]-ORDEN[b])[0] || "Por verificar";
+      if(estatus==="Lo tiene" && aplican.some(i=>resp[i]!=="cumple" && corregidos.has(i))) estatus = "Lo tiene (corregido)";
+    }
+    return {doc:it.t, estatus, vigencia:it.v||"", nota:it.n||"", rec:!!it.rec};
+  }).filter(Boolean)})).filter(cp=>cp.docs.length);
+
+  const datosEst = await getDatosEst(ev.expediente_id);
+  const clinica = datosEst.nombreComercial || state.currentExpediente?.nombre_expediente || "Establecimiento";
+  const doc = new jsPDF({unit:"pt", format:"letter"});
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), margin = 48, maxW = pageW - margin*2;
+  let y = margin;
+  const NAVY=[15,42,67], INK=[15,24,34], SOFT=[58,70,84];
+  const ST = {"Lo tiene":[46,125,79], "Lo tiene (corregido)":[46,125,79], "Incompleto":[184,134,11], "Falta":[179,38,30], "Por verificar":[120,130,140], "Recomendado":[46,109,164]};
+  const checkBreak = need=>{ if(y+need > pageH-margin){ doc.addPage(); y=margin; } };
+  const body = (t,o)=>{ o=o||{}; doc.setFont("helvetica",o.bold?"bold":"normal"); doc.setFontSize(o.size||10.5); doc.setTextColor(...(o.color||INK));
+    doc.splitTextToSize(String(t||""), maxW-(o.indent||0)).forEach(l=>{ checkBreak(o.lh||14); doc.text(l, margin+(o.indent||0), y); y+=o.lh||14; }); };
+  const hoy = new Date().toISOString().slice(0,10);
+
+  drawPortadaPdf(doc, {titulo:`Carpetas de cumplimiento · ${conf.label}`, subtitulo:"Lo que debe tener listo para una visita de verificación", cliente:clinica,
+    detalle:`Con base en el check-up del ${ev.fecha_visita||"—"} · Actualizado al ${hoy}`, detalle2:[datosEst.domicilio, datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
+  doc.setFillColor(...NAVY); doc.rect(0,0,pageW,110,"F");
+  try{ doc.addImage(LOGO_MARK_B64, "PNG", pageW-margin-40, 14, 44, 44); }catch(e){}
+  doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(255,255,255); doc.text(`Carpetas de cumplimiento · ${conf.label}`, margin, 52);
+  doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(230,230,225); doc.text(clinica, margin, 74);
+  doc.setFontSize(10); doc.setTextColor(216,193,150); doc.text("Elaborado por: Saúl Flores | Elementos Financieros", margin, 92);
+  y = 138;
+  body(`Tenga en físico ${carpetas.length} carpeta${carpetas.length===1?"":"s"} con este orden y una copia digital con la misma estructura. Así una visita de verificación presencial o documental de ${conf.label} se atiende en minutos.`, {size:10.5});
+  y += 4;
+  // resumen
+  const todos = carpetas.flatMap(c=>c.docs);
+  const cnt = k => todos.filter(d=>d.estatus===k || (k==="Lo tiene" && d.estatus==="Lo tiene (corregido)")).length;
+  const cards = [["Lo tiene",cnt("Lo tiene")],["Incompleto",cnt("Incompleto")],["Falta",cnt("Falta")],["Por verificar",cnt("Por verificar")],["Recomendado",cnt("Recomendado")]];
+  const cw = (maxW-32)/5; checkBreak(62);
+  cards.forEach(([k,n],i)=>{ const x = margin+i*(cw+8); doc.setFillColor(246,246,243); doc.roundedRect(x, y, cw, 50, 6, 6, "F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(...ST[k]); doc.text(String(n), x+cw/2, y+25, {align:"center"});
+    doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(...SOFT); doc.text(k, x+cw/2, y+40, {align:"center"}); });
+  y += 66;
+  // portadillas de carpetas
+  doc.setFont("helvetica","bold"); doc.setFontSize(12.5); doc.setTextColor(...NAVY); doc.text("Sus carpetas físicas", margin, y); y += 16;
+  carpetas.forEach((c,i)=> body(`Carpeta ${i+1} · ${c.t} (${c.docs.length} documentos)`, {size:10.5, lh:14}));
+  y += 8;
+  carpetas.forEach((c, ci)=>{
+    checkBreak(70);
+    doc.setFillColor(...NAVY); doc.roundedRect(margin, y-13, maxW, 26, 5, 5, "F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.setTextColor(255,255,255); doc.text(`Carpeta ${ci+1} · ${c.t}`, margin+12, y+4);
+    y += 24; body(c.p, {size:9.5, color:SOFT, lh:12}); y += 6;
+    c.docs.forEach((d, di)=>{
+      const code = `${ci+1}.${di+1}`; const pillW = 92;
+      const archivo = `${String(ci+1).padStart(2,"0")}-${String(di+1).padStart(2,"0")}_${carpetaSlug(d.doc)}.pdf`;
+      const dl = doc.setFont("helvetica","bold").setFontSize(10).splitTextToSize(d.doc, maxW - 52 - pillW - 8);
+      const nl = d.nota ? doc.setFont("helvetica","normal").setFontSize(8.5).splitTextToSize(d.nota, maxW-52) : [];
+      checkBreak(dl.length*13 + nl.length*11 + 22);
+      doc.setDrawColor(...NAVY); doc.setLineWidth(0.8); doc.rect(margin, y-9, 10, 10); doc.setLineWidth(1);
+      doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(...NAVY); doc.text(code, margin+16, y);
+      doc.setTextColor(...INK); dl.forEach((t,i)=>doc.text(t, margin+52, y+i*13));
+      doc.setFillColor(...ST[d.estatus]); doc.roundedRect(pageW-margin-pillW, y-10, pillW, 15, 7.5, 7.5, "F");
+      doc.setFontSize(8); doc.setTextColor(255,255,255); doc.text(d.estatus, pageW-margin-pillW/2, y, {align:"center"});
+      y += dl.length*13;
+      doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...SOFT);
+      doc.text(`${d.vigencia ? d.vigencia + "  ·  " : ""}Archivo: ${archivo}`, margin+52, y); y += 11;
+      nl.forEach(t=>{ doc.text(t, margin+52, y); y+=11; });
+      doc.setDrawColor(232,232,228); doc.line(margin, y-4, pageW-margin, y-4); y += 10;
+    });
+    y += 8;
+  });
+  checkBreak(80);
+  doc.setFont("helvetica","bold"); doc.setFontSize(12.5); doc.setTextColor(...NAVY); doc.text("Carpeta digital", margin, y); y += 16;
+  body(`Cumplimiento_${carpetaSlug(conf.label,2)}_${carpetaSlug(clinica,3)}`, {bold:true, size:10});
+  carpetas.forEach((c,i)=> body(`   ${String(i+1).padStart(2,"0")}_${carpetaSlug(c.t,5)}`, {size:10, lh:13}));
+  body("En una nube de la clínica (no en un celular personal), con acceso restringido y respaldo.", {size:9.5, color:SOFT, lh:12});
+  y += 10;
+  doc.setFont("helvetica","bold"); doc.setFontSize(12.5); doc.setTextColor(...NAVY); checkBreak(40); doc.text("Control de revisiones", margin, y); y += 12;
+  const cols = [["Fecha",90],["Revisó",150],["Observaciones",maxW-240]];
+  let x = margin; doc.setFontSize(9.5); doc.setTextColor(...SOFT); cols.forEach(([t,w])=>{ doc.text(t, x+4, y); x+=w; }); y += 6;
+  for(let i=0;i<6;i++){ checkBreak(22); doc.setDrawColor(200,200,195); doc.rect(margin, y, maxW, 20); let xx=margin; cols.slice(0,-1).forEach(([,w])=>{ xx+=w; doc.line(xx,y,xx,y+20); }); y+=20; }
+  y += 12;
+  body("Recomendado = buena práctica, no requisito. Por verificar = documento aplicable que no se revisó en la visita. Índice preventivo; no sustituye una visita de verificación ni una resolución de la autoridad.", {size:8.5, color:SOFT, lh:11});
+
+  const fileName = `CARPETAS-${carpetaSlug(conf.label,2)}-${carpetaSlug(clinica,4)}-${hoy}.pdf`;
+  const blob = doc.output("blob");
+  try{ const file = new File([blob], fileName, {type:"application/pdf"}); if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:fileName}); return; } }catch(e){}
+  const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href=url; a.download=fileName; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 30000);
+}
+
 function renderTabRegulatorio(body, exp, porArea, avance){
   const areas = REG_AREAS.slice();
   if(porArea.otras.length) areas.push({codigo:"otras", nombre:"Sin clasificar", icon:"📁", sub:"Evaluaciones aún sin área (se acomodan al sincronizar)"});
@@ -2210,16 +2446,6 @@ function renderTabRegulatorio(body, exp, porArea, avance){
     if(bSeg) bSeg.onclick = () => iniciarVisitaSeguimiento(exp, lista);
     body.appendChild(card);
   });
-  const hayEvals = ["cofepris","stps","proteccion_civil"].some(k=>(porArea[k]||[]).length);
-  if(hayEvals){
-    const bc = document.createElement("button");
-    bc.className = "action-btn"; bc.style.background = "var(--navy-800)"; bc.style.marginTop = "6px";
-    bc.innerHTML = "<span>🗂 Índice de la carpeta de cumplimiento (PDF)</span><span>→</span>";
-    bc.onclick = async () => { const t = bc.innerHTML; bc.disabled = true; bc.innerHTML = "<span>Generando…</span>";
-      try{ await generarIndiceCarpeta(exp, porArea); }catch(err){ showError("No se pudo generar el índice: " + (err&&err.message?err.message:err)); }
-      bc.disabled = false; bc.innerHTML = t; };
-    body.appendChild(bc);
-  }
 }
 
 function renderModulosProximos(titulo, sub, mods){
@@ -3068,6 +3294,7 @@ async function renderDiagnosticoEvaluacion(){
       <div id="findings-list"></div>
     </div>
     <button class="btn btn-primary" id="btn-pdf" style="margin-bottom:10px">Generar PDF</button>
+    <button class="btn btn-ghost" id="btn-carpetas" style="margin-bottom:10px;border-width:2px;border-color:var(--navy-800)">🗂 Índice de carpetas de cumplimiento (PDF)</button>
     ${ev.nivel_checkup==="completo" ? `<button class="btn btn-ghost" id="btn-proto-mkt" style="margin-bottom:10px;border-width:2px;border-color:var(--gold-500)">📱 Protocolo de redes para marketing (PDF)</button>` : ""}
     ${ev.estatus!=="completado" ? `<button class="btn btn-ghost" id="btn-cerrar-eval" style="margin-bottom:20px">Cerrar evaluación</button>`
       : `<div class="empty-note" style="margin-bottom:20px">✅ Evaluación cerrada</div>`}
@@ -3152,6 +3379,10 @@ async function renderDiagnosticoEvaluacion(){
     renderDiagnosticoEvaluacion(); // refleja de inmediato el tachado/check y la barra de progreso
   }));
 
+  const bCarp = document.getElementById("btn-carpetas");
+  if(bCarp) bCarp.onclick = async (e)=>{ const b=e.target; b.disabled=true; const t=b.textContent; b.textContent="Generando...";
+    try{ await generarIndiceCarpetaDep(ev); }catch(err){ showError("No se pudo generar el índice: " + (err&&err.message?err.message:err)); }
+    b.disabled=false; b.textContent=t; };
   const bProto = document.getElementById("btn-proto-mkt");
   if(bProto) bProto.onclick = async (e)=>{
     const btn = e.target; btn.disabled=true; const t=btn.textContent; btn.textContent="Generando...";
@@ -4045,7 +4276,9 @@ async function renderTabClinica(body, exp){
         <button class="action-btn" id="btn-op-new" style="margin-top:10px;margin-bottom:0"><span>+ Nuevo Check-up Operativo</span><span>→</span></button>
       </div>
     </div>
-    ${renderModulosProximos("Siguientes módulos", "En construcción dentro de la Fase 4 y 5.", CLINICA_MODS.filter(m=>m.nombre!=="Procesos"))}`;
+    <div id="fin-slot"></div>
+    ${renderModulosProximos("Siguientes módulos", "En construcción dentro de la Fase 4 y 5.", CLINICA_MODS.filter(m=>!["Procesos","Finanzas"].includes(m.nombre)))}`;
+  renderCardFinanzas(document.getElementById("fin-slot"), exp);
   document.getElementById("btn-op-new").onclick = () => opIniciar(exp);
   const list = document.getElementById("op-list");
   let rows = [];
@@ -4586,6 +4819,346 @@ async function generarPdfOperativo(ev, res){
   setTimeout(()=>URL.revokeObjectURL(url), 30000);
 }
 
+
+
+/* =====================================================================================
+   FASE 4 · CLÍNICA · FINANZAS (fin-v1) — tres capas: la clínica, el retiro del médico y el
+   exceso de efectivo. Dos entregables: PDF para el médico (su valor y lo que no trabaja) y PDF
+   técnico para el fiscalista de la Red. Todo es ESTIMADO con supuestos editables y visibles.
+   El patrimonio personal del médico NO se captura aquí (eso es la fase de Patrimonio).
+   ===================================================================================== */
+const FIN_VERSION = "fin-v1";
+const FIN_SUPUESTOS_DEF = {mesesReserva:3, rendimientoRef:7, multiplo:2, multiploIndependiente:3, gCons:-10, gBase:0, gOpt:15};
+const FIN_SECCIONES = [
+  {id:"ingresos", nombre:"Ingresos", sub:"Cuánto vende la clínica y cómo cobra"},
+  {id:"tratamientos", nombre:"Tratamientos principales", sub:"Hasta 5: precio, cuántos al mes y costo de insumo"},
+  {id:"gastos", nombre:"Gastos y deudas", sub:"Lo que cuesta operar cada mes"},
+  {id:"medico", nombre:"El médico", sub:"Cuánto retira y cuánto trabaja"},
+  {id:"efectivo", nombre:"Efectivo y orden fiscal", sub:"Dónde está el dinero y cómo se factura"},
+  {id:"supuestos", nombre:"Supuestos del reporte", sub:"Los defines tú; aparecen en el PDF"},
+];
+const FIN_CAMPOS = {
+  ingresos: [
+    {k:"venta", l:"Venta mensual promedio de la clínica", u:"$"},
+    {k:"otrosIngresos", l:"Otros ingresos mensuales de la clínica (renta de consultorio, productos, etc.)", u:"$"},
+    {k:"pctEfectivo", l:"% de cobro en efectivo", u:"%"},
+    {k:"pctTarjeta", l:"% de cobro con tarjeta", u:"%"},
+    {k:"pctTransferencia", l:"% de cobro por transferencia", u:"%"},
+    {k:"comisionTerminal", l:"Comisión de la terminal (% por cobro con tarjeta)", u:"%"},
+  ],
+  gastos: [
+    {k:"renta", l:"Renta del local", u:"$"}, {k:"nomina", l:"Nómina y sueldos del equipo", u:"$"},
+    {k:"honorarios", l:"Honorarios externos (otros médicos, aplicadores, contador)", u:"$"},
+    {k:"servicios", l:"Servicios (luz, agua, internet, teléfono)", u:"$"}, {k:"software", l:"Software y suscripciones", u:"$"},
+    {k:"publicidad", l:"Publicidad y marketing", u:"$"}, {k:"mantenimiento", l:"Mantenimiento de equipos e instalaciones", u:"$"},
+    {k:"otrosGastos", l:"Otros gastos fijos", u:"$"},
+    {k:"pagoDeudas", l:"Pagos mensuales de créditos o arrendamientos (equipos, local)", u:"$"},
+    {k:"saldoDeudas", l:"Saldo total aproximado de esas deudas", u:"$"},
+  ],
+  medico: [
+    {k:"retiro", l:"Cuánto retira el médico de la clínica al mes (promedio)", u:"$"},
+    {k:"horasSemana", l:"Horas a la semana que el médico atiende en la clínica", u:"#"},
+    {k:"formaPago", l:"¿Cómo se paga el médico su retiro?", sel:["Sueldo / nómina","Honorarios facturados","Retira sin comprobante","Dividendos","No sabe"]},
+  ],
+  efectivo: [
+    {k:"saldoCuentas", l:"Saldo promedio en cuentas bancarias de la clínica", u:"$"},
+    {k:"pctEfectivoDeposita", l:"% del efectivo cobrado que se deposita al banco", u:"%"},
+    {k:"efectivoFuera", l:"Efectivo acumulado fuera del banco (aprox., opcional)", u:"$"},
+    {k:"pctFacturado", l:"% de la venta que se factura (CFDI)", u:"%"},
+    {k:"regimen", l:"Régimen fiscal con el que opera la clínica", sel:["Persona física – actividad profesional","RESICO persona física","Persona moral – régimen general","RESICO persona moral","No sabe"]},
+    {k:"cuentasSeparadas", l:"¿El dinero de la clínica y el personal del médico están en cuentas separadas?", sel:["Sí","No","En parte"]},
+  ],
+  supuestos: [
+    {k:"mesesReserva", l:"Meses de gastos que debe tener la clínica como reserva", u:"#"},
+    {k:"rendimientoRef", l:"Rendimiento anual de referencia para el dinero parado (%)", u:"%"},
+    {k:"multiplo", l:"Múltiplo de valuación (veces la utilidad anual)", u:"#"},
+    {k:"multiploIndependiente", l:"Múltiplo si la clínica dependiera menos del médico", u:"#"},
+    {k:"gCons", l:"Crecimiento anual – escenario conservador (%)", u:"%"},
+    {k:"gBase", l:"Crecimiento anual – escenario base (%)", u:"%"},
+    {k:"gOpt", l:"Crecimiento anual – escenario optimista (%)", u:"%"},
+  ],
+};
+const finN = v => { if(v===null||v===undefined||v==="") return null; const n = parseFloat(String(v).replace(/[^0-9.\-]/g,"")); return isFinite(n) ? n : null; };
+const finM = n => (n===null||!isFinite(n)) ? "—" : (n<0?"-":"") + "$" + Math.round(Math.abs(n)).toLocaleString("es-MX");
+const finP = n => (n===null||!isFinite(n)) ? "—" : (Math.round(n*10)/10) + "%";
+
+function finCalcular(datos, sup){
+  const d = datos||{}, S = {...FIN_SUPUESTOS_DEF}; Object.entries(sup||{}).forEach(([k,v])=>{ const n=finN(v); if(n!==null) S[k]=n; });
+  const N = k => finN(d[k]) || 0;
+  const trats = (d.tratamientos||[]).filter(t=>t && t.nombre && finN(t.precio));
+  const tr = trats.map(t=>{ const p=finN(t.precio)||0, q=finN(t.cantidad)||0, c=finN(t.costo)||0;
+    return {nombre:t.nombre, precio:p, cantidad:q, costo:c, venta:p*q, insumo:c*q, contribucion:(p-c)*q, margen:p? (p-c)/p*100 : null}; });
+  const ventaTrats = tr.reduce((s,t)=>s+t.venta,0), insumoTrats = tr.reduce((s,t)=>s+t.insumo,0);
+  const venta = finN(d.venta) || ventaTrats;
+  const ingresos = venta + N("otrosIngresos");
+  const pctInsumo = ventaTrats ? insumoTrats/ventaTrats : null;
+  const insumos = pctInsumo!==null ? venta*pctInsumo : 0;
+  const comisiones = venta * (N("pctTarjeta")/100) * (N("comisionTerminal")/100);
+  const fijosKeys = ["renta","nomina","honorarios","servicios","software","publicidad","mantenimiento","otrosGastos"];
+  const fijos = fijosKeys.reduce((s,k)=>s+N(k),0);
+  const utilidad = ingresos - insumos - comisiones - fijos;
+  const pagoDeudas = N("pagoDeudas");
+  const flujoDeudas = utilidad - pagoDeudas;
+  const retiro = N("retiro");
+  const sobrante = flujoDeudas - retiro;
+  const margenContrib = venta ? (1 - (insumos+comisiones)/venta) : null;
+  const equilibrio = (margenContrib && margenContrib>0) ? (fijos + pagoDeudas - N("otrosIngresos"))/margenContrib : null;
+  const horasMes = N("horasSemana") * 4.33;
+  const ventaHora = horasMes ? venta/horasMes : null, ingresoHora = horasMes ? (retiro)/horasMes : null;
+  const utilidadAnual = utilidad*12;
+  const valor = utilidadAnual>0 ? utilidadAnual*S.multiplo : null;
+  const valorIndep = utilidadAnual>0 ? utilidadAnual*S.multiploIndependiente : null;
+  const reserva = (fijos + pagoDeudas) * S.mesesReserva;
+  const saldo = N("saldoCuentas");
+  const excesoLiquidez = Math.max(0, saldo - reserva);
+  const ventaEfectivo = venta * N("pctEfectivo")/100;
+  const pctDep = finN(d.pctEfectivoDeposita);
+  const efectivoNoDepMes = pctDep===null ? null : ventaEfectivo * (1 - pctDep/100);
+  const efectivoFuera = N("efectivoFuera");
+  const exceso = excesoLiquidez + efectivoFuera;
+  const costoOportunidad = exceso * S.rendimientoRef/100;
+  const proy = ["gCons","gBase","gOpt"].map(g=>{
+    const tasa = S[g]/100; const anios = [1,2,3].map(a=>{
+      const v = venta*Math.pow(1+tasa,a-1); const ins = pctInsumo!==null? v*pctInsumo:0; const com = v*(N("pctTarjeta")/100)*(N("comisionTerminal")/100);
+      const u = (v + N("otrosIngresos") - ins - com - fijos)*12; return {anio:a, venta:v*12, utilidad:u, sobrante:u - (pagoDeudas+retiro)*12}; });
+    return {g, tasa:S[g], anios, acumulado3: anios.reduce((s,x)=>s+x.sobrante,0)}; });
+  const banderas = [];
+  const pf = finN(d.pctFacturado);
+  if(pf!==null && pf<100) banderas.push({t:"Venta sin facturar", det:`Se factura aprox. ${pf}% de la venta; ${finM(venta*(1-pf/100))} al mes quedan sin CFDI.`, nivel:"alto"});
+  if(efectivoNoDepMes && efectivoNoDepMes>0) banderas.push({t:"Efectivo de cobros no bancarizado", det:`Aprox. ${finM(efectivoNoDepMes)} al mes de cobros en efectivo no se depositan.`, nivel:"alto"});
+  if(efectivoFuera>0) banderas.push({t:"Efectivo acumulado fuera del banco", det:`Aprox. ${finM(efectivoFuera)} fuera del sistema bancario.`, nivel:"alto"});
+  if(d.formaPago==="Retira sin comprobante") banderas.push({t:"Retiro del médico sin comprobante", det:"El médico retira dinero de la clínica sin un esquema fiscal definido.", nivel:"alto"});
+  if(d.cuentasSeparadas && d.cuentasSeparadas!=="Sí") banderas.push({t:"Cuentas de la clínica y del médico mezcladas", det:`Separación de cuentas: ${d.cuentasSeparadas}.`, nivel:"medio"});
+  if(d.regimen==="No sabe" || !d.regimen) banderas.push({t:"Régimen fiscal no identificado", det:"La clínica no tiene claro con qué régimen opera.", nivel:"medio"});
+  if(retiro && sobrante<0) banderas.push({t:"Retiro mayor a lo que deja la clínica", det:`Después de gastos y deudas, el retiro deja un faltante de ${finM(-sobrante)} al mes.`, nivel:"alto"});
+  const estrella = tr.slice().sort((a,b)=>b.contribucion-a.contribucion)[0] || null;
+  const volumen = tr.slice().sort((a,b)=>b.cantidad-a.cantidad)[0] || null;
+  return {S, tr, venta, ingresos, insumos, comisiones, fijos, utilidad, pagoDeudas, flujoDeudas, retiro, sobrante, margenContrib, equilibrio,
+    ventaHora, ingresoHora, utilidadAnual, valor, valorIndep, reserva, saldo, excesoLiquidez, ventaEfectivo, efectivoNoDepMes, efectivoFuera,
+    exceso, costoOportunidad, proy, banderas, estrella, volumen, margenUtil: ingresos ? utilidad/ingresos*100 : null};
+}
+
+/* ------------------------- Pestaña Clínica: tarjeta Finanzas ------------------------- */
+async function renderCardFinanzas(container, exp){
+  const card = document.createElement("div");
+  card.className = "card area-card";
+  card.innerHTML = `<div class="area-head" style="cursor:default"><div class="area-icon">📊</div>
+    <div style="flex:1;min-width:0"><div class="area-name">Finanzas</div><div class="area-sub">Diagnóstico financiero · reporte al médico y al fiscalista</div></div></div>
+    <div class="area-body"><div id="fin-list"><div class="muted small">Cargando…</div></div>
+    <button class="action-btn" id="btn-fin-new" style="margin-top:10px;margin-bottom:0"><span>+ Nuevo diagnóstico financiero</span><span>→</span></button></div>`;
+  container.appendChild(card);
+  card.querySelector("#btn-fin-new").onclick = () => finIniciar(exp);
+  const list = card.querySelector("#fin-list");
+  if(!navigator.onLine){ list.innerHTML = `<div class="empty-note">Sin conexión.</div>`; return; }
+  const { data, error } = await sb.from("evaluaciones_financieras").select("*").eq("expediente_id", exp.id).is("anulado_at", null).order("fecha",{ascending:false});
+  if(error){ list.innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
+  list.innerHTML = (data||[]).length ? "" : `<div class="empty-note">Sin diagnósticos financieros todavía.</div>`;
+  (data||[]).forEach(ev=>{
+    const r = finCalcular(ev.datos, ev.supuestos);
+    const row = document.createElement("div"); row.className="small-row"; row.style.cursor="pointer";
+    row.innerHTML = `<span>${esc(ev.fecha)} · ${ev.estatus==="completada"?"Completado":"En captura"}</span><span style="font-weight:600">${finM(r.utilidad)}/mes</span>`;
+    row.onclick = () => { state.finEval = {...ev, expediente_nombre: exp.nombre_expediente, secIdx:0}; go(ev.estatus==="completada" ? "fin-resultado" : "fin-wizard"); };
+    list.appendChild(row);
+  });
+}
+async function finIniciar(exp){
+  const datos = {tratamientos:[]};
+  try{
+    const { data } = await sb.from("evaluaciones_operativas").select("respuestas").eq("expediente_id", exp.id).is("anulado_at", null).order("fecha_visita",{ascending:false}).limit(1);
+    const eco = data && data[0] && data[0].respuestas && data[0].respuestas.__eco;
+    if(eco){ if(eco.venta) datos.venta = eco.venta; if(eco.publicidad) datos.publicidad = eco.publicidad; }
+  }catch(e){}
+  state.finEval = {id:null, expediente_id:exp.id, expediente_nombre:exp.nombre_expediente, fecha:new Date().toISOString().slice(0,10), estatus:"borrador", datos, supuestos:{...FIN_SUPUESTOS_DEF}, secIdx:0};
+  go("fin-wizard");
+}
+async function finGuardar(ev, estatus){
+  if(!navigator.onLine) return {ok:false, offline:true};
+  const row = {expediente_id:ev.expediente_id, fecha:ev.fecha, datos:ev.datos, supuestos:ev.supuestos, version_modelo:FIN_VERSION, estatus: estatus||ev.estatus||"borrador"};
+  if(row.estatus==="completada"){ const r = finCalcular(ev.datos, ev.supuestos); row.resultado = {utilidad:r.utilidad, valor:r.valor, exceso:r.exceso, banderas:r.banderas.map(b=>b.t)}; }
+  const res = ev.id ? await sb.from("evaluaciones_financieras").update(row).eq("id", ev.id).select("id").single()
+                    : await sb.from("evaluaciones_financieras").insert(row).select("id").single();
+  if(res.error) return {ok:false, error:res.error};
+  ev.id = res.data.id; ev.estatus = row.estatus; return {ok:true};
+}
+
+/* ------------------------- Captura ------------------------- */
+function renderFinWizard(){
+  const ev = state.finEval; if(!ev){ go("dashboard"); return; }
+  const sec = FIN_SECCIONES[ev.secIdx], total = FIN_SECCIONES.length;
+  const D = ev.datos, Sp = ev.supuestos;
+  $app.innerHTML = `
+    <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+      <div style="flex:1"><p class="brand">DIAGNÓSTICO FINANCIERO · ${ev.secIdx+1} DE ${total}</p><h1 style="font-size:18px">${esc(sec.nombre)}</h1></div></div>
+      <div style="height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin-top:10px"><div style="height:4px;width:${Math.round(100*(ev.secIdx+1)/total)}%;background:var(--gold-500);border-radius:2px"></div></div></div>
+    <div class="content">
+      <p class="muted small" style="margin:0 0 10px">${esc(sec.sub)}. Si el médico no da un dato, déjalo en blanco.</p>
+      <div class="card" id="fin-form"></div>
+      <div id="fin-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
+      <div style="display:flex;gap:10px">${ev.secIdx>0?`<button class="btn btn-ghost" id="fin-prev" style="flex:1">← Anterior</button>`:""}
+        <button class="btn btn-primary" id="fin-next" style="flex:2">${ev.secIdx===total-1?"Ver resultado →":"Siguiente →"}</button></div>
+    </div>`;
+  const form = document.getElementById("fin-form");
+  const store = sec.id==="supuestos" ? Sp : D;
+  if(sec.id==="tratamientos"){
+    D.tratamientos = D.tratamientos || [];
+    while(D.tratamientos.length<5) D.tratamientos.push({});
+    form.innerHTML = D.tratamientos.map((t,i)=>`<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b class="small">Tratamiento ${i+1}</b>
+      <input type="text" data-t="${i}" data-k="nombre" value="${esc(t.nombre||"")}" placeholder="Nombre (ej. Toxina botulínica)" style="margin:6px 0">
+      <div style="display:flex;gap:6px"><input type="text" inputmode="decimal" data-t="${i}" data-k="precio" value="${esc(t.precio||"")}" placeholder="Precio $">
+      <input type="text" inputmode="decimal" data-t="${i}" data-k="cantidad" value="${esc(t.cantidad||"")}" placeholder="# al mes">
+      <input type="text" inputmode="decimal" data-t="${i}" data-k="costo" value="${esc(t.costo||"")}" placeholder="Costo insumo $"></div></div>`).join("");
+    form.querySelectorAll("[data-t]").forEach(inp=>inp.addEventListener("input",()=>{ D.tratamientos[+inp.dataset.t][inp.dataset.k] = inp.value.trim(); }));
+  } else {
+    form.innerHTML = FIN_CAMPOS[sec.id].map(f=> f.sel
+      ? `<label>${esc(f.l)}</label><select data-k="${f.k}"><option value="">Selecciona</option>${f.sel.map(o=>`<option ${store[f.k]===o?"selected":""}>${esc(o)}</option>`).join("")}</select>`
+      : `<label>${esc(f.l)}${f.u==="$"?" (MXN)":f.u==="%"?" (%)":""}</label><input type="text" inputmode="decimal" data-k="${f.k}" value="${esc(store[f.k]??"")}">`).join("");
+    form.querySelectorAll("[data-k]").forEach(inp=>inp.addEventListener(inp.tagName==="SELECT"?"change":"input",()=>{ store[inp.dataset.k] = inp.value.trim(); }));
+  }
+  const guardar = async () => { const r = await finGuardar(ev); if(!r.ok){ const n=document.getElementById("fin-note"); if(n) n.textContent = r.offline ? "📴 Sin conexión: se guardará al recuperar señal." : "No se pudo guardar: "+(r.error?.message||""); } };
+  document.getElementById("btn-back").onclick = async () => { await guardar(); go("expediente", {currentExpediente:{id:ev.expediente_id, nombre_expediente:ev.expediente_nombre}}); };
+  const prev = document.getElementById("fin-prev"); if(prev) prev.onclick = async ()=>{ await guardar(); ev.secIdx--; go("fin-wizard"); };
+  document.getElementById("fin-next").onclick = async ()=>{ await guardar(); if(ev.secIdx<total-1){ ev.secIdx++; go("fin-wizard"); } else go("fin-resultado"); };
+}
+
+/* ------------------------- Resultado ------------------------- */
+function renderFinResultado(){
+  const ev = state.finEval; if(!ev){ go("dashboard"); return; }
+  const r = finCalcular(ev.datos, ev.supuestos);
+  const kpi = (t,v,s,c) => `<div class="card" style="padding:12px;margin:0"><div class="muted small">${esc(t)}</div><div style="font-size:20px;font-weight:700;color:${c||"var(--navy-900)"}">${v}</div>${s?`<div class="muted small">${esc(s)}</div>`:""}</div>`;
+  $app.innerHTML = `
+    <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+      <div style="flex:1"><p class="brand">DIAGNÓSTICO FINANCIERO</p><h1 style="font-size:18px">${esc(ev.expediente_nombre||"")}</h1></div></div></div>
+    <div class="content">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        ${kpi("La clínica deja al mes", finM(r.utilidad), r.margenUtil!==null?`Margen ${finP(r.margenUtil)}`:"", r.utilidad<0?"#B3261E":"#2E7D4F")}
+        ${kpi("Valor estimado de la clínica", finM(r.valor), `Hasta ${finM(r.valorIndep)} si dependiera menos del médico`)}
+        ${kpi("Exceso de efectivo", finM(r.exceso), `Deja de generar ${finM(r.costoOportunidad)} al año`, "#B8860B")}
+        ${kpi("Punto de equilibrio", finM(r.equilibrio), "Venta mínima mensual")}
+        ${kpi("Genera la clínica por hora del médico", finM(r.ventaHora), "")}
+        ${kpi("Después de deudas y retiro", finM(r.sobrante), r.sobrante<0?"Faltante mensual":"Sobrante mensual", r.sobrante<0?"#B3261E":"var(--navy-900)")}
+      </div>
+      ${r.estrella?`<div class="card"><div class="section-title">Tratamientos</div>${r.tr.sort((a,b)=>b.contribucion-a.contribucion).map(t=>`<div class="small-row"><span>${esc(t.nombre)}${t===r.estrella?" ⭐":""}</span><span class="muted">${finM(t.contribucion)}/mes · margen ${finP(t.margen)}</span></div>`).join("")}<p class="muted small" style="margin:6px 0 0">⭐ = el que más dinero le deja, no necesariamente el que más vende.</p></div>`:""}
+      <div class="card"><div class="section-title">Temas para el fiscalista (${r.banderas.length})</div>
+        ${r.banderas.length ? r.banderas.map(b=>`<div class="small-row" style="display:block"><b style="color:${b.nivel==="alto"?"#B3261E":"#B8860B"}">${esc(b.t)}</b><div class="muted small">${esc(b.det)}</div></div>`).join("") : `<div class="muted small">Sin banderas con los datos capturados.</div>`}</div>
+      <div id="fin-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
+      ${ev.estatus!=="completada"?`<button class="action-btn" id="fin-complete"><span>✓ Marcar como completado</span><span>→</span></button>`:""}
+      <button class="action-btn" id="fin-pdf-med" style="background:var(--navy-800)"><span>📄 PDF para el médico</span><span>→</span></button>
+      <button class="action-btn" id="fin-pdf-fis" style="background:#3a2f1a"><span>🔒 PDF técnico para el fiscalista</span><span>→</span></button>
+      <button class="btn btn-ghost" id="fin-edit" style="margin-top:4px">Editar datos y supuestos</button>
+    </div>`;
+  document.getElementById("btn-back").onclick = () => go("expediente", {currentExpediente:{id:ev.expediente_id, nombre_expediente:ev.expediente_nombre}});
+  document.getElementById("fin-edit").onclick = () => { ev.secIdx = 0; go("fin-wizard"); };
+  const bc = document.getElementById("fin-complete");
+  if(bc) bc.onclick = async ()=>{ const x = await finGuardar(ev, "completada"); if(!x.ok){ showError(x.offline?"Completar necesita conexión.":"No se pudo guardar: "+(x.error?.message||"")); return; } go("fin-resultado"); };
+  const pdfBtn = (id, fn) => { document.getElementById(id).onclick = async (e)=>{ const b=e.currentTarget; b.disabled=true; try{ await fn(ev, r); }catch(err){ showError("No se pudo generar el PDF: "+(err&&err.message?err.message:err)); } b.disabled=false; }; };
+  pdfBtn("fin-pdf-med", generarPdfFinMedico); pdfBtn("fin-pdf-fis", generarPdfFinFiscalista);
+}
+
+/* ------------------------- PDFs ------------------------- */
+function finPdfBase(titulo, sub){
+  const {jsPDF} = window.jspdf; const doc = new jsPDF({unit:"pt", format:"letter"});
+  const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), margin = 48, maxW = pageW - margin*2;
+  const ctx = {doc, pageW, pageH, margin, maxW, y:margin, NAVY:[15,42,67], INK:[15,24,34], SOFT:[58,70,84], RED:[179,38,30], GOLD:[184,134,11], GREEN:[46,125,79]};
+  ctx.hex = h=>{ const n=parseInt(h.replace("#",""),16); return [(n>>16)&255,(n>>8)&255,n&255]; };
+  ctx.checkBreak = need=>{ if(ctx.y+need > pageH-margin){ doc.addPage(); ctx.y=margin; } };
+  ctx.body = (t,o)=>{ o=o||{}; doc.setFont("helvetica",o.bold?"bold":"normal"); doc.setFontSize(o.size||11); doc.setTextColor(...(o.color||ctx.INK));
+    doc.splitTextToSize(String(t||""), maxW-(o.indent||0)).forEach(l=>{ ctx.checkBreak(o.lh||15); doc.text(l, margin+(o.indent||0), ctx.y); ctx.y+=o.lh||15; }); };
+  ctx.heading = t=>{ ctx.checkBreak(48); ctx.y+=6; doc.setFillColor(...ctx.NAVY); doc.roundedRect(margin, ctx.y-14, maxW, 24, 5, 5, "F"); doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.setTextColor(255,255,255); doc.text(t, margin+12, ctx.y+2); ctx.y+=24; };
+  ctx.header = (t, cliente)=>{ doc.setFillColor(...ctx.NAVY); doc.rect(0,0,pageW,110,"F"); try{ doc.addImage(LOGO_MARK_B64,"PNG",pageW-margin-40,14,44,44); }catch(e){}
+    doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(255,255,255); doc.text(t, margin, 52);
+    doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(230,230,225); doc.text(cliente, margin, 74);
+    doc.setFontSize(10); doc.setTextColor(216,193,150); doc.text("Elaborado por: Saúl Flores | Elementos Financieros", margin, 92); ctx.y = 138; };
+  ctx.kpis = (items)=>{ const cw=(maxW-20)/3; let col=0; ctx.checkBreak(84);
+    items.forEach(([t,v,s,c],i)=>{ if(col===3){ col=0; ctx.y+=84; ctx.checkBreak(84); } const x=margin+col*(cw+10);
+      doc.setFillColor(246,246,243); doc.roundedRect(x, ctx.y, cw, 74, 6, 6, "F");
+      doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...ctx.SOFT); doc.splitTextToSize(t.toUpperCase(), cw-20).slice(0,2).forEach((l,j)=>doc.text(l, x+10, ctx.y+15+j*10));
+      doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.setTextColor(...(c||ctx.NAVY)); doc.text(v, x+10, ctx.y+48);
+      if(s){ doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(...ctx.INK); doc.text(doc.splitTextToSize(s, cw-20)[0], x+10, ctx.y+64); } col++; });
+    ctx.y += 92; };
+  ctx.row = (a,b,bold)=>{ ctx.checkBreak(18); doc.setFont("helvetica",bold?"bold":"normal"); doc.setFontSize(10.5); doc.setTextColor(...ctx.INK);
+    doc.text(doc.splitTextToSize(a, maxW-150)[0], margin, ctx.y); doc.text(b, pageW-margin, ctx.y, {align:"right"}); ctx.y+=6; doc.setDrawColor(232,232,228); doc.line(margin, ctx.y, pageW-margin, ctx.y); ctx.y+=12; };
+  ctx.save = async (fileName)=>{ const blob = doc.output("blob");
+    try{ const file = new File([blob], fileName, {type:"application/pdf"}); if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file], title:fileName}); return; } }catch(e){}
+    const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href=url; a.download=fileName; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 30000); };
+  return ctx;
+}
+async function generarPdfFinMedico(ev, r){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
+  r = r || finCalcular(ev.datos, ev.supuestos);
+  const datosEst = await getDatosEst(ev.expediente_id);
+  const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
+  const c = finPdfBase(); const {doc} = c;
+  drawPortadaPdf(doc, {titulo:"Diagnóstico financiero de tu clínica", subtitulo:"Lo que vale lo que construiste", cliente:clinica, detalle:`Fecha: ${ev.fecha}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
+  c.header("Tu clínica en números", clinica);
+  c.body("Este diagnóstico muestra cuánto genera tu clínica, cuánto vale como negocio y cuánto dinero tienes que hoy no está trabajando para ti. Las cifras son estimaciones con los datos que compartiste y los supuestos indicados al final.", {size:10.5, lh:15}); c.y+=8;
+  c.kpis([
+    ["Valor estimado de tu clínica", finM(r.valor), `Hasta ${finM(r.valorIndep)} si dependiera menos de ti`],
+    ["Lo que deja tu clínica al mes", finM(r.utilidad), r.margenUtil!==null?`Margen ${finP(r.margenUtil)}`:"", r.utilidad<0?c.RED:c.GREEN],
+    ["Lo que genera cada hora tuya", finM(r.ventaHora), "Venta de la clínica por hora que atiendes"],
+    ["Dinero que no está trabajando", finM(r.exceso), `Deja de generar ~${finM(r.costoOportunidad)} al año`, c.GOLD],
+    ["Tu punto de equilibrio", finM(r.equilibrio), "Venta mínima mensual para no perder"],
+    ["Sobrante después de deudas y tu retiro", finM(r.sobrante), r.sobrante<0?"Hoy retiras más de lo que deja":"Al mes", r.sobrante<0?c.RED:c.NAVY],
+  ]);
+  if(r.tr.length){
+    c.heading("Tus tratamientos: cuál te deja más");
+    r.tr.slice().sort((a,b)=>b.contribucion-a.contribucion).forEach(t=>c.row(`${t.nombre}${t===r.estrella?"  (el que más te deja)":""}`, `${finM(t.contribucion)}/mes · margen ${finP(t.margen)}`, t===r.estrella));
+    if(r.volumen && r.estrella && r.volumen!==r.estrella) c.body(`${r.volumen.nombre} es el que más vendes, pero ${r.estrella.nombre} es el que más dinero te deja. Ahí hay una decisión de precios y de agenda.`, {size:10, color:c.SOFT, lh:13});
+  }
+  c.heading("Hacia dónde va tu clínica (3 años)");
+  const nombres = {gCons:"Conservador", gBase:"Base", gOpt:"Optimista"};
+  r.proy.forEach(p=> c.row(`${nombres[p.g]} (${p.tasa>=0?"+":""}${p.tasa}% anual)`, `Utilidad año 3: ${finM(p.anios[2].utilidad)} · Sobrante acumulado: ${finM(p.acumulado3)}`));
+  c.heading("Dinero que hoy no trabaja para ti");
+  c.body(`Una reserva sana para tu clínica sería de ${finM(r.reserva)} (${r.S.mesesReserva} meses de gastos y deudas). Todo lo que la rebasa, más el efectivo que no está en el banco, es dinero que podría estar protegido y generando rendimiento.`, {size:10.5});
+  c.y+=4; c.row("Exceso de efectivo estimado", finM(r.exceso), true); c.row("Lo que deja de generar al año (supuesto del " + r.S.rendimientoRef + "%)", finM(r.costoOportunidad));
+  c.heading("Lo que hay que ordenar");
+  if(r.banderas.length){ c.body(`Detectamos ${r.banderas.length} tema(s) que conviene revisar con un especialista fiscal antes de mover ese dinero:`, {size:10.5}); r.banderas.forEach(b=>c.body("•  " + b.t, {size:10.5, indent:6})); }
+  else c.body("Con los datos compartidos no detectamos temas fiscales urgentes; aun así conviene una revisión de estrategia.", {size:10.5});
+  c.y+=6;
+  c.checkBreak(70); c.doc.setFillColor(241,231,210); c.doc.roundedRect(c.margin, c.y, c.maxW, 58, 6, 6, "F");
+  c.doc.setFont("helvetica","bold"); c.doc.setFontSize(11.5); c.doc.setTextColor(...c.NAVY); c.doc.text("Siguiente paso", c.margin+14, c.y+20);
+  c.doc.setFont("helvetica","normal"); c.doc.setFontSize(10); c.doc.setTextColor(...c.INK);
+  c.doc.splitTextToSize("Revisión con el especialista fiscal de la Red Elementos Financieros: ordenar la clínica, definir cómo te pagas y darle dirección al exceso de efectivo.", c.maxW-28).forEach((l,i)=>c.doc.text(l, c.margin+14, c.y+36+i*13));
+  c.y += 74;
+  c.body(`Supuestos: reserva de ${r.S.mesesReserva} meses; rendimiento de referencia ${r.S.rendimientoRef}% anual; valuación ${r.S.multiplo}x la utilidad anual (${r.S.multiploIndependiente}x con operación independiente del médico); crecimiento ${r.S.gCons}% / ${r.S.gBase}% / ${r.S.gOpt}%. Cifras ESTIMADAS con información proporcionada por la clínica; no constituyen un dictamen contable ni una valuación formal.`, {size:8.5, color:c.SOFT, lh:11});
+  await c.save(`DIAGNOSTICO-FINANCIERO-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
+}
+async function generarPdfFinFiscalista(ev, r){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
+  r = r || finCalcular(ev.datos, ev.supuestos);
+  const datosEst = await getDatosEst(ev.expediente_id); const D = ev.datos||{};
+  const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
+  const c = finPdfBase(); const {doc} = c;
+  c.header("Diagnóstico técnico — uso del especialista fiscal", clinica);
+  c.body("CONFIDENCIAL · Documento interno de la Red Elementos Financieros. No entregar al cliente.", {bold:true, size:9.5, color:c.RED});
+  datosEstLineas(datosEst).forEach(l=>c.body(l, {size:9.5, color:c.SOFT, lh:13}));
+  c.body(`Fecha de levantamiento: ${ev.fecha}`, {size:9.5, color:c.SOFT, lh:13}); c.y+=6;
+  c.heading("1. Temas fiscales detectados");
+  if(r.banderas.length) r.banderas.forEach(b=>{ c.body(`${b.nivel==="alto"?"[ALTO]":"[MEDIO]"} ${b.t}`, {bold:true, size:10.5, color:b.nivel==="alto"?c.RED:c.GOLD}); c.body(b.det, {size:10, indent:10, lh:13}); c.y+=3; });
+  else c.body("Sin banderas con los datos capturados.", {size:10});
+  c.heading("2. Perfil fiscal declarado");
+  c.row("Régimen de la clínica", D.regimen||"—"); c.row("Forma en que se paga el médico", D.formaPago||"—"); c.row("Cuentas clínica / médico separadas", D.cuentasSeparadas||"—");
+  c.row("% de venta facturada (CFDI)", D.pctFacturado?D.pctFacturado+"%":"—");
+  c.heading("3. Estado de resultados mensual (estimado)");
+  c.row("Venta", finM(r.venta)); c.row("Otros ingresos", finM(finN(D.otrosIngresos)||0)); c.row("(-) Insumos", finM(r.insumos)); c.row("(-) Comisiones de terminal", finM(r.comisiones));
+  c.row("(-) Gastos fijos", finM(r.fijos)); c.row("= Utilidad operativa", finM(r.utilidad), true); c.row("(-) Pagos de deuda", finM(r.pagoDeudas)); c.row("(-) Retiro del médico", finM(r.retiro)); c.row("= Sobrante / faltante", finM(r.sobrante), true);
+  c.row("Saldo total de deudas", finM(finN(D.saldoDeudas))); c.row("Punto de equilibrio mensual", finM(r.equilibrio));
+  c.heading("4. Detalle de gastos fijos");
+  FIN_CAMPOS.gastos.filter(f=>!["pagoDeudas","saldoDeudas"].includes(f.k)).forEach(f=>c.row(f.l, finM(finN(D[f.k]))));
+  c.heading("5. Cobro y efectivo");
+  c.row("Mezcla de cobro (efectivo / tarjeta / transferencia)", `${D.pctEfectivo||"—"}% / ${D.pctTarjeta||"—"}% / ${D.pctTransferencia||"—"}%`);
+  c.row("Venta mensual en efectivo", finM(r.ventaEfectivo)); c.row("% del efectivo que se deposita", D.pctEfectivoDeposita?D.pctEfectivoDeposita+"%":"—");
+  c.row("Efectivo de cobros no depositado al mes", finM(r.efectivoNoDepMes)); c.row("Efectivo acumulado fuera del banco", finM(r.efectivoFuera));
+  c.row("Saldo promedio en cuentas de la clínica", finM(r.saldo)); c.row(`Reserva objetivo (${r.S.mesesReserva} meses)`, finM(r.reserva));
+  c.row("Exceso de liquidez en cuentas", finM(r.excesoLiquidez)); c.row("Exceso de efectivo total", finM(r.exceso), true);
+  if(r.tr.length){ c.heading("6. Tratamientos"); r.tr.forEach(t=>c.row(`${t.nombre} · ${t.cantidad}/mes · precio ${finM(t.precio)} · insumo ${finM(t.costo)}`, `${finM(t.contribucion)} · ${finP(t.margen)}`)); }
+  c.heading("7. Valuación y proyección (estimadas)");
+  c.row(`Utilidad anual × ${r.S.multiplo}`, finM(r.valor)); c.row(`Con operación independiente (× ${r.S.multiploIndependiente})`, finM(r.valorIndep));
+  r.proy.forEach(p=>c.row(`Escenario ${p.tasa>=0?"+":""}${p.tasa}%: utilidad años 1/2/3`, p.anios.map(a=>finM(a.utilidad)).join(" / ")));
+  c.heading("8. Preguntas abiertas para la estrategia");
+  ["¿El régimen actual es el más eficiente para el volumen y tipo de ingreso de la clínica?","¿Cuál es el esquema óptimo y comprobable para que el médico se pague?","¿Cómo bancarizar y regularizar el efectivo no depositado y el acumulado, y con qué riesgos y plazos?","¿Qué separación conviene entre la clínica y el patrimonio personal del médico?","Una vez ordenado: ¿qué parte del exceso de efectivo puede destinarse a reserva, protección e inversión?"].forEach(t=>c.body("•  "+t, {size:10.5, indent:4}));
+  c.y+=8; c.body("Datos proporcionados por la clínica durante la visita y no verificados contra estados de cuenta ni declaraciones. Cálculos estimados para orientar la estrategia.", {size:8.5, color:c.SOFT, lh:11});
+  await c.save(`FISCALISTA-CONFIDENCIAL-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
+}
 
 /* ------------------------------- Init ------------------------------- */
 window.addEventListener("unhandledrejection", (ev)=>{
