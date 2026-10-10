@@ -1531,6 +1531,8 @@ async function render(){
   if(state.screen==="op-wizard") return renderOpWizard();
   if(state.screen==="exp-datos") return renderExpDatos();
   if(state.screen==="fin-wizard") return renderFinWizard();
+  if(state.screen==="fis-wizard") return renderFisWizard();
+  if(state.screen==="fis-resultado") return renderFisResultado();
   if(state.screen==="fin-resultado") return renderFinResultado();
   if(state.screen==="op-resultado") return renderOpResultado();
 }
@@ -4276,9 +4278,10 @@ async function renderTabClinica(body, exp){
         <button class="action-btn" id="btn-op-new" style="margin-top:10px;margin-bottom:0"><span>+ Nuevo Check-up Operativo</span><span>→</span></button>
       </div>
     </div>
-    <div id="fin-slot"></div>
-    ${renderModulosProximos("Siguientes módulos", "En construcción dentro de la Fase 4 y 5.", CLINICA_MODS.filter(m=>!["Procesos","Finanzas"].includes(m.nombre)))}`;
+    <div id="fin-slot"></div><div id="fis-slot"></div>
+    ${renderModulosProximos("Siguientes módulos", "En construcción en la Fase 5.", CLINICA_MODS.filter(m=>!["Procesos","Finanzas","Fiscalidad"].includes(m.nombre)))}`;
   renderCardFinanzas(document.getElementById("fin-slot"), exp);
+  renderCardFiscal(document.getElementById("fis-slot"), exp);
   document.getElementById("btn-op-new").onclick = () => opIniciar(exp);
   const list = document.getElementById("op-list");
   let rows = [];
@@ -5158,6 +5161,301 @@ async function generarPdfFinFiscalista(ev, r){
   ["¿El régimen actual es el más eficiente para el volumen y tipo de ingreso de la clínica?","¿Cuál es el esquema óptimo y comprobable para que el médico se pague?","¿Cómo bancarizar y regularizar el efectivo no depositado y el acumulado, y con qué riesgos y plazos?","¿Qué separación conviene entre la clínica y el patrimonio personal del médico?","Una vez ordenado: ¿qué parte del exceso de efectivo puede destinarse a reserva, protección e inversión?"].forEach(t=>c.body("•  "+t, {size:10.5, indent:4}));
   c.y+=8; c.body("Datos proporcionados por la clínica durante la visita y no verificados contra estados de cuenta ni declaraciones. Cálculos estimados para orientar la estrategia.", {size:8.5, color:c.SOFT, lh:11});
   await c.save(`FISCALISTA-CONFIDENCIAL-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
+}
+
+
+/* =====================================================================================
+   FASE 4 · CLÍNICA · FISCALIDAD (fis-v1) — no hace estrategia (eso es del fiscalista de la Red).
+   1) Semáforo fiscal para el médico. 2) Paquete de entrada para el fiscalista: semáforo detallado,
+   situación con su contador actual, checklist de documentos y resumen de Finanzas. 3) Seguimiento de
+   pendientes del fiscalista. Nunca se capturan contraseñas ni la e.firma.
+   ===================================================================================== */
+const FIS_GRUPOS = [
+  {id:"sat", nombre:"Situación ante el SAT", preguntas:[
+    {k:"opinion", t:"Opinión de cumplimiento del SAT", o:[["Positiva","v"],["Negativa","r"],["No la conoce","a"]]},
+    {k:"mensuales", t:"Declaraciones mensuales al día", o:[["Sí","v"],["Atrasadas","r"],["No sabe","a"]]},
+    {k:"anual", t:"Declaración anual del último ejercicio presentada", o:[["Sí","v"],["No","r"],["No sabe","a"]]},
+    {k:"efirma", t:"e.firma vigente y en manos del médico", o:[["Sí, la tiene él","v"],["La tiene solo el contador","a"],["Vencida o no sabe","r"]]},
+    {k:"buzon", t:"Buzón tributario activo y revisado", o:[["Sí","v"],["Activo, pero nadie lo revisa","a"],["No sabe","a"]]},
+    {k:"requerimientos", t:"Requerimientos o cartas invitación del SAT", o:[["Ninguno","v"],["Sí, atendidos","a"],["Sí, sin atender","r"]]},
+  ]},
+  {id:"factura", nombre:"Facturación", preguntas:[
+    {k:"facturaCobros", t:"Factura los cobros a pacientes", o:[["Siempre","v"],["Solo si la piden","a"],["Casi nunca","r"]]},
+    {k:"facturaGlobal", t:"Emite factura global por ventas al público en general", o:[["Sí","v"],["No","r"],["No sabe","a"]]},
+    {k:"iva", t:"Tiene claro si sus tratamientos estéticos causan IVA", o:[["Sí, lo revisó con su contador","v"],["No","a"],["No sabe","a"]]},
+    {k:"gastos", t:"Pide y guarda facturas de sus gastos", o:[["Siempre","v"],["A veces","a"],["Casi nunca","r"]]},
+  ]},
+  {id:"nomina", nombre:"Nómina e IMSS", preguntas:[
+    {k:"timbrada", t:"Personal con recibos de nómina timbrados", o:[["Todos","v"],["Algunos","a"],["Ninguno","r"],["No tiene personal","n"]]},
+    {k:"cuotas", t:"Cuotas del IMSS e impuesto sobre nómina al día", o:[["Sí","v"],["Atrasadas","r"],["No sabe","a"],["No tiene personal","n"]]},
+  ]},
+  {id:"estructura", nombre:"Estructura", preguntas:[
+    {k:"regimen", t:"Régimen fiscal con el que opera", o:[["Persona física – actividad profesional","v"],["RESICO persona física","v"],["Persona moral – régimen general","v"],["RESICO persona moral","v"],["No sabe","r"]]},
+    {k:"pagoMedico", t:"Cómo se paga el médico", o:[["Sueldo / nómina","v"],["Honorarios facturados","v"],["Dividendos","v"],["Retira sin comprobante","r"],["No sabe","a"]]},
+    {k:"separadas", t:"Cuentas de la clínica y personales separadas", o:[["Sí","v"],["En parte","a"],["No","r"]]},
+  ]},
+  {id:"contador", nombre:"Acompañamiento contable", preguntas:[
+    {k:"tieneContador", t:"Tiene contador", o:[["Sí, externo","v"],["Sí, interno","v"],["No","r"]]},
+    {k:"reporta", t:"Cada cuándo le reporta su contador", o:[["Cada mes","v"],["Solo cuando hay un problema","a"],["Nunca","r"]]},
+    {k:"acuses", t:"Le entrega los acuses de sus declaraciones", o:[["Siempre","v"],["A veces","a"],["Nunca","r"]]},
+    {k:"estrategia", t:"Le ha propuesto alguna estrategia o ahorro fiscal en el último año", o:[["Sí","v"],["No","a"]]},
+    {k:"califica", t:"Cómo califica el médico el servicio de su contador", o:[["Bueno","v"],["Regular","a"],["Malo","r"]]},
+    {k:"accesos", t:"Quién controla la e.firma y la contraseña del SAT", o:[["El médico","v"],["Ambos","v"],["Solo el contador","a"],["No sabe","r"]]},
+  ]},
+];
+const FIS_DOCS = [
+  {k:"csf", t:"Constancia de situación fiscal (reciente)"},
+  {k:"opinion", t:"Opinión de cumplimiento del SAT (reciente)"},
+  {k:"mensuales", t:"Acuses de declaraciones mensuales de los últimos 12 meses"},
+  {k:"anual", t:"Declaración anual del último ejercicio y su acuse"},
+  {k:"emitidos", t:"Facturas emitidas de los últimos 12 meses (XML o reporte)"},
+  {k:"recibidos", t:"Facturas recibidas de gastos de los últimos 12 meses (XML o reporte)"},
+  {k:"nomina", t:"Recibos de nómina timbrados y comprobantes de pago IMSS / ISN"},
+  {k:"estados", t:"Estados de cuenta bancarios de la clínica de los últimos 12 meses"},
+  {k:"contratos", t:"Contratos: arrendamiento, socios, prestación de servicios"},
+  {k:"acta", t:"Acta constitutiva y poderes (si es persona moral)"},
+  {k:"sat", t:"Requerimientos o cartas invitación del SAT recibidos (si hay)"},
+];
+const FIS_COLOR = {v:"#2E7D4F", a:"#B8860B", r:"#B3261E", n:"#8B96A0", x:"#C9CDD2"};
+const FIS_LABEL = {v:"En orden", a:"Atención", r:"Riesgo", n:"No aplica", x:"Sin dato"};
+
+function fisCalcular(datos){
+  const d = datos||{};
+  const grupos = FIS_GRUPOS.map(g=>{
+    const items = g.preguntas.map(p=>{ const op = p.o.find(o=>o[0]===d[p.k]); return {p, resp: d[p.k]||"", nivel: op ? op[1] : "x"}; });
+    const niveles = items.map(i=>i.nivel).filter(n=>n!=="n");
+    const nivel = niveles.includes("r") ? "r" : niveles.includes("a") ? "a" : niveles.every(n=>n==="x") ? "x" : niveles.includes("x") ? "a" : "v";
+    return {g, items, nivel};
+  });
+  const sinContador = grupos.find(x=>x.g.id==="contador");
+  const fiscales = grupos.filter(x=>x.g.id!=="contador").map(x=>x.nivel);
+  const global = fiscales.includes("r") ? "r" : fiscales.includes("a") ? "a" : fiscales.every(n=>n==="x") ? "x" : "v";
+  const riesgos = grupos.flatMap(x=>x.items.filter(i=>i.nivel==="r").map(i=>({grupo:x.g.nombre, t:i.p.t, resp:i.resp})));
+  const atencion = grupos.flatMap(x=>x.items.filter(i=>i.nivel==="a").map(i=>({grupo:x.g.nombre, t:i.p.t, resp:i.resp})));
+  return {grupos, global, contador: sinContador.nivel, riesgos, atencion};
+}
+
+/* ------------------------- Tarjeta en la pestaña Clínica ------------------------- */
+async function renderCardFiscal(container, exp){
+  const card = document.createElement("div");
+  card.className = "card area-card";
+  card.innerHTML = `<div class="area-head" style="cursor:default"><div class="area-icon">🧾</div>
+    <div style="flex:1;min-width:0"><div class="area-name">Fiscalidad</div><div class="area-sub">Semáforo fiscal · paquete para el fiscalista · seguimiento</div></div></div>
+    <div class="area-body"><div id="fis-list"><div class="muted small">Cargando…</div></div>
+    <button class="action-btn" id="btn-fis-new" style="margin-top:10px;margin-bottom:0"><span>+ Nuevo check-up fiscal</span><span>→</span></button></div>`;
+  container.appendChild(card);
+  card.querySelector("#btn-fis-new").onclick = () => fisIniciar(exp);
+  const list = card.querySelector("#fis-list");
+  if(!navigator.onLine){ list.innerHTML = `<div class="empty-note">Sin conexión.</div>`; return; }
+  const { data, error } = await sb.from("evaluaciones_fiscales").select("*").eq("expediente_id", exp.id).is("anulado_at", null).order("fecha",{ascending:false});
+  if(error){ list.innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
+  list.innerHTML = (data||[]).length ? "" : `<div class="empty-note">Sin check-ups fiscales todavía.</div>`;
+  (data||[]).forEach(ev=>{
+    const r = fisCalcular(ev.datos); const pend = (ev.pendientes||[]); const res = pend.filter(x=>x.estatus==="Resuelto").length;
+    const row = document.createElement("div"); row.className="small-row"; row.style.cursor="pointer";
+    row.innerHTML = `<span>${esc(ev.fecha)}${pend.length?` · ${res}/${pend.length} pendientes resueltos`:""}</span><span style="font-weight:600;color:${FIS_COLOR[r.global]}">● ${FIS_LABEL[r.global]}</span>`;
+    row.onclick = () => { state.fisEval = {...ev, expediente_nombre: exp.nombre_expediente, secIdx:0}; go(ev.estatus==="completada" ? "fis-resultado" : "fis-wizard"); };
+    list.appendChild(row);
+  });
+}
+async function fisIniciar(exp){
+  const datos = {};
+  try{
+    const { data } = await sb.from("evaluaciones_financieras").select("datos").eq("expediente_id", exp.id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1);
+    const f = data && data[0] && data[0].datos;
+    if(f){
+      if(f.regimen) datos.regimen = f.regimen;
+      const mapPago = {"Sueldo / nómina":"Sueldo / nómina","Honorarios facturados":"Honorarios facturados","Retira sin comprobante":"Retira sin comprobante","Dividendos":"Dividendos","No sabe":"No sabe"};
+      if(f.formaPago) datos.pagoMedico = mapPago[f.formaPago];
+      if(f.cuentasSeparadas) datos.separadas = f.cuentasSeparadas;
+      const pf = finN(f.pctFacturado); if(pf!==null) datos.facturaCobros = pf>=95 ? "Siempre" : pf>=40 ? "Solo si la piden" : "Casi nunca";
+    }
+  }catch(e){}
+  state.fisEval = {id:null, expediente_id:exp.id, expediente_nombre:exp.nombre_expediente, fecha:new Date().toISOString().slice(0,10), estatus:"borrador", datos, documentos:{}, fiscalista:"", pendientes:[], secIdx:0};
+  go("fis-wizard");
+}
+async function fisGuardar(ev, estatus){
+  if(!navigator.onLine) return {ok:false, offline:true};
+  const row = {expediente_id:ev.expediente_id, fecha:ev.fecha, datos:ev.datos, documentos:ev.documentos, fiscalista:ev.fiscalista||null, pendientes:ev.pendientes||[], estatus: estatus||ev.estatus||"borrador"};
+  if(row.estatus==="completada"){ const r = fisCalcular(ev.datos); row.resultado = {global:r.global, contador:r.contador, riesgos:r.riesgos.length}; }
+  const res = ev.id ? await sb.from("evaluaciones_fiscales").update(row).eq("id", ev.id).select("id").single()
+                    : await sb.from("evaluaciones_fiscales").insert(row).select("id").single();
+  if(res.error) return {ok:false, error:res.error};
+  ev.id = res.data.id; ev.estatus = row.estatus; return {ok:true};
+}
+
+/* ------------------------- Captura: 5 grupos + documentos ------------------------- */
+function renderFisWizard(){
+  const ev = state.fisEval; if(!ev){ go("dashboard"); return; }
+  const total = FIS_GRUPOS.length + 1, esDocs = ev.secIdx === FIS_GRUPOS.length;
+  const g = esDocs ? null : FIS_GRUPOS[ev.secIdx];
+  $app.innerHTML = `
+    <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+      <div style="flex:1"><p class="brand">CHECK-UP FISCAL · ${ev.secIdx+1} DE ${total}</p><h1 style="font-size:18px">${esDocs?"Documentos para el fiscalista":esc(g.nombre)}</h1></div></div>
+      <div style="height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin-top:10px"><div style="height:4px;width:${Math.round(100*(ev.secIdx+1)/total)}%;background:var(--gold-500);border-radius:2px"></div></div></div>
+    <div class="content">
+      <p class="muted small" style="margin:0 0 10px">${esDocs ? "Marca qué te entregó el médico. Pide copias, nunca contraseñas ni archivos de la e.firma." : g.id==="contador" ? "Hechos, no opiniones: lo que el médico recibe hoy de su contador." : "Lo que diga el médico. Si no sabe, eso también es un dato."}</p>
+      <div id="fis-form"></div>
+      <div id="fis-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
+      <div style="display:flex;gap:10px">${ev.secIdx>0?`<button class="btn btn-ghost" id="fis-prev" style="flex:1">← Anterior</button>`:""}
+        <button class="btn btn-primary" id="fis-next" style="flex:2">${ev.secIdx===total-1?"Ver resultado →":"Siguiente →"}</button></div>
+    </div>`;
+  const form = document.getElementById("fis-form");
+  const opcion = (sel, val, color) => `<div class="op-opt ${sel?"selected":""}" data-val="${esc(val)}"><span class="op-lvl" style="background:${color}">●</span><span>${esc(val)}</span></div>`;
+  if(esDocs){
+    FIS_DOCS.forEach(dd=>{
+      const card = document.createElement("div"); card.className="card"; card.style.padding="12px";
+      const cur = ev.documentos[dd.k] || "";
+      card.innerHTML = `<div style="font-weight:500;margin-bottom:8px">${esc(dd.t)}</div><div class="chip-grid">${["Entregado","Pendiente","No aplica"].map(o=>`<span class="chip ${cur===o?"selected":""}" data-o="${o}">${o}</span>`).join("")}</div>`;
+      card.querySelectorAll(".chip").forEach(ch=>ch.onclick=()=>{ ev.documentos[dd.k] = ch.dataset.o; card.querySelectorAll(".chip").forEach(x=>x.classList.toggle("selected", x===ch)); });
+      form.appendChild(card);
+    });
+  } else {
+    g.preguntas.forEach(p=>{
+      const card = document.createElement("div"); card.className="card"; card.style.padding="12px";
+      const pintar = () => { card.innerHTML = `<div style="font-weight:500;margin-bottom:8px">${esc(p.t)}</div>` + p.o.map(([val,n])=>opcion(ev.datos[p.k]===val, val, FIS_COLOR[n])).join("");
+        card.querySelectorAll(".op-opt").forEach(o=>o.onclick=()=>{ ev.datos[p.k] = o.dataset.val; pintar(); }); };
+      pintar(); form.appendChild(card);
+    });
+  }
+  const guardar = async () => { const r = await fisGuardar(ev); if(!r.ok){ const n=document.getElementById("fis-note"); if(n) n.textContent = r.offline ? "📴 Sin conexión: se guardará al recuperar señal." : "No se pudo guardar: "+(r.error?.message||""); } };
+  document.getElementById("btn-back").onclick = async () => { await guardar(); go("expediente", {currentExpediente:{id:ev.expediente_id, nombre_expediente:ev.expediente_nombre}}); };
+  const prev = document.getElementById("fis-prev"); if(prev) prev.onclick = async ()=>{ await guardar(); ev.secIdx--; go("fis-wizard"); };
+  document.getElementById("fis-next").onclick = async ()=>{ await guardar(); if(ev.secIdx<total-1){ ev.secIdx++; go("fis-wizard"); } else go("fis-resultado"); };
+}
+
+/* ------------------------- Resultado + seguimiento del fiscalista ------------------------- */
+function renderFisResultado(){
+  const ev = state.fisEval; if(!ev){ go("dashboard"); return; }
+  const r = fisCalcular(ev.datos);
+  const docsEnt = FIS_DOCS.filter(d=>ev.documentos[d.k]==="Entregado").length, docsAplican = FIS_DOCS.filter(d=>ev.documentos[d.k]!=="No aplica").length;
+  const pend = ev.pendientes = ev.pendientes || [];
+  $app.innerHTML = `
+    <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+      <div style="flex:1"><p class="brand">CHECK-UP FISCAL</p><h1 style="font-size:18px">${esc(ev.expediente_nombre||"")}</h1></div></div></div>
+    <div class="content">
+      <div class="card" style="display:flex;align-items:center;gap:14px">
+        <div style="width:58px;height:58px;border-radius:50%;background:${FIS_COLOR[r.global]};flex-shrink:0"></div>
+        <div><div class="area-name">Semáforo fiscal: ${FIS_LABEL[r.global]}</div><div class="area-sub">${r.riesgos.length} en riesgo · ${r.atencion.length} requieren atención</div>
+        <div class="area-sub">Acompañamiento contable: <b style="color:${FIS_COLOR[r.contador]}">${FIS_LABEL[r.contador]}</b></div></div>
+      </div>
+      <div class="card"><div class="section-title">Por grupo</div>${r.grupos.map(x=>`<div class="small-row"><span>${esc(x.g.nombre)}</span><b style="color:${FIS_COLOR[x.nivel]}">● ${FIS_LABEL[x.nivel]}</b></div>`).join("")}</div>
+      <div class="card"><div class="section-title">Paquete para el fiscalista</div>
+        <div class="small-row"><span>Documentos entregados</span><b>${docsEnt} de ${docsAplican}</b></div>
+        <label class="small muted" style="margin-top:8px">Fiscalista de la Red asignado</label>
+        <input type="text" id="fis-fiscalista" value="${esc(ev.fiscalista||"")}" placeholder="Nombre del fiscalista">
+      </div>
+      <div class="card"><div class="section-title">Seguimiento del fiscalista (${pend.filter(x=>x.estatus==="Resuelto").length}/${pend.length} resueltos)</div>
+        <div id="fis-pend"></div>
+        <button class="btn btn-ghost" id="fis-add-pend" style="margin-top:8px">+ Agregar pendiente</button>
+        ${!pend.length && r.riesgos.length ? `<button class="btn btn-ghost" id="fis-sugerir" style="margin-top:6px">Crear pendientes a partir de los riesgos</button>` : ""}
+      </div>
+      <div id="fis-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
+      ${ev.estatus!=="completada"?`<button class="action-btn" id="fis-complete"><span>✓ Marcar como completado</span><span>→</span></button>`:""}
+      <button class="action-btn" id="fis-pdf-med" style="background:var(--navy-800)"><span>🚦 Semáforo fiscal para el médico (PDF)</span><span>→</span></button>
+      <button class="action-btn" id="fis-pdf-fis" style="background:#3a2f1a"><span>🔒 Paquete para el fiscalista (PDF)</span><span>→</span></button>
+      <button class="btn btn-ghost" id="fis-edit" style="margin-top:4px">Editar respuestas y documentos</button>
+    </div>`;
+  const guardar = async () => { const x = await fisGuardar(ev); const n = document.getElementById("fis-note"); if(n) n.textContent = x.ok ? "Guardado." : (x.offline ? "📴 Sin conexión." : "No se pudo guardar."); };
+  document.getElementById("fis-fiscalista").addEventListener("change", e=>{ ev.fiscalista = e.target.value.trim(); guardar(); });
+  const pl = document.getElementById("fis-pend");
+  const EST = ["Pendiente","En proceso","Resuelto"];
+  pend.forEach((x,i)=>{
+    const row = document.createElement("div"); row.className="small-row"; row.style.display="block";
+    row.innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(x.tarea)}</span><span class="muted small">${esc(x.fecha||"")}</span></div>
+      <div class="chip-grid" style="margin-top:6px">${EST.map(e=>`<span class="chip ${x.estatus===e?"selected":""}" data-e="${e}">${e}</span>`).join("")}<span class="chip" data-del="1">✕</span></div>`;
+    row.querySelectorAll("[data-e]").forEach(ch=>ch.onclick=async()=>{ x.estatus = ch.dataset.e; await guardar(); renderFisResultado(); });
+    row.querySelector("[data-del]").onclick = async()=>{ pend.splice(i,1); await guardar(); renderFisResultado(); };
+    pl.appendChild(row);
+  });
+  if(!pend.length) pl.innerHTML = `<div class="muted small">Sin pendientes. Agrégalos cuando el fiscalista defina su plan.</div>`;
+  document.getElementById("fis-add-pend").onclick = async ()=>{
+    const t = await askText("Nuevo pendiente del fiscalista", "Tarea", "Ej. Regularizar declaraciones atrasadas"); if(!t || !t.trim()) return;
+    const f = await askText("Fecha objetivo (opcional)", "AAAA-MM-DD", "");
+    pend.push({tarea:t.trim(), estatus:"Pendiente", fecha:(f||"").trim()}); await guardar(); renderFisResultado(); };
+  const bs = document.getElementById("fis-sugerir");
+  if(bs) bs.onclick = async ()=>{ r.riesgos.forEach(x=>pend.push({tarea:`Atender: ${x.t} (${x.resp})`, estatus:"Pendiente", fecha:""})); await guardar(); renderFisResultado(); };
+  document.getElementById("btn-back").onclick = () => go("expediente", {currentExpediente:{id:ev.expediente_id, nombre_expediente:ev.expediente_nombre}});
+  document.getElementById("fis-edit").onclick = () => { ev.secIdx = 0; go("fis-wizard"); };
+  const bc = document.getElementById("fis-complete");
+  if(bc) bc.onclick = async ()=>{ const x = await fisGuardar(ev, "completada"); if(!x.ok){ showError(x.offline?"Completar necesita conexión.":"No se pudo guardar: "+(x.error?.message||"")); return; } go("fis-resultado"); };
+  const pdfBtn = (id, fn) => { document.getElementById(id).onclick = async (e)=>{ const b=e.currentTarget; b.disabled=true; try{ await fn(ev); }catch(err){ showError("No se pudo generar el PDF: "+(err&&err.message?err.message:err)); } b.disabled=false; }; };
+  pdfBtn("fis-pdf-med", generarPdfFisMedico); pdfBtn("fis-pdf-fis", generarPdfFisFiscalista);
+}
+
+/* ------------------------- PDFs ------------------------- */
+function fisLuz(c, x, y, nivel, r){ c.doc.setFillColor(...c.hex(FIS_COLOR[nivel])); c.doc.circle(x, y, r||6, "F"); }
+async function generarPdfFisMedico(ev){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
+  const r = fisCalcular(ev.datos); const datosEst = await getDatosEst(ev.expediente_id);
+  const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
+  const c = finPdfBase(); const {doc} = c;
+  drawPortadaPdf(doc, {titulo:"Semáforo fiscal de tu clínica", subtitulo:"Dónde estás hoy frente al SAT", cliente:clinica, detalle:`Fecha: ${ev.fecha}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
+  c.header("Tu semáforo fiscal", clinica);
+  c.checkBreak(90); fisLuz(c, c.margin+28, c.y+24, r.global, 26);
+  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.setTextColor(...c.NAVY); doc.text(`Estado general: ${FIS_LABEL[r.global]}`, c.margin+70, c.y+18);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK);
+  doc.text(`${r.riesgos.length} punto(s) en riesgo · ${r.atencion.length} que requieren atención`, c.margin+70, c.y+36);
+  c.y += 70;
+  c.body("Este semáforo resume tu situación con base en lo que nos compartiste. No es una auditoría ni una opinión fiscal: muestra dónde conviene que un especialista revise y ordene.", {size:10, color:c.SOFT, lh:14}); c.y+=6;
+  r.grupos.forEach(x=>{
+    c.heading(x.g.nombre + "  ·  " + FIS_LABEL[x.nivel]);
+    x.items.forEach(i=>{ c.checkBreak(20); fisLuz(c, c.margin+6, c.y-4, i.nivel, 4.5);
+      doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK); doc.text(doc.splitTextToSize(i.p.t, c.maxW-190)[0], c.margin+18, c.y);
+      doc.setTextColor(...c.SOFT); doc.text(i.resp || "Sin dato", c.pageW-c.margin, c.y, {align:"right"}); c.y += 17; });
+  });
+  const pend = ev.pendientes||[];
+  if(pend.length){
+    c.heading(`Avance de tu especialista fiscal: ${pend.filter(x=>x.estatus==="Resuelto").length} de ${pend.length} resueltos`);
+    pend.forEach(p=>c.row(p.tarea, p.estatus + (p.fecha?` · ${p.fecha}`:""), p.estatus==="Resuelto"));
+  }
+  c.y+=6; c.checkBreak(76); doc.setFillColor(241,231,210); doc.roundedRect(c.margin, c.y, c.maxW, 62, 6, 6, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.setTextColor(...c.NAVY); doc.text("Siguiente paso", c.margin+14, c.y+20);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(...c.INK);
+  doc.splitTextToSize(`Revisión con el especialista fiscal de la Red Elementos Financieros${ev.fiscalista?` (${ev.fiscalista})`:""}: poner al día lo pendiente, ordenar cómo factura y cómo te pagas, y preparar el terreno para tu estrategia.`, c.maxW-28).forEach((l,i)=>doc.text(l, c.margin+14, c.y+36+i*13));
+  c.y += 78;
+  c.body("Semáforo elaborado con información proporcionada por el médico; no verificada contra el SAT. No constituye asesoría ni dictamen fiscal.", {size:8.5, color:c.SOFT, lh:11});
+  await c.save(`SEMAFORO-FISCAL-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
+}
+async function generarPdfFisFiscalista(ev){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
+  const r = fisCalcular(ev.datos); const datosEst = await getDatosEst(ev.expediente_id);
+  const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
+  let fin = null;
+  try{ const { data } = await sb.from("evaluaciones_financieras").select("*").eq("expediente_id", ev.expediente_id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1); if(data && data[0]) fin = data[0]; }catch(e){}
+  const c = finPdfBase(); const {doc} = c;
+  c.header("Paquete de entrada — especialista fiscal", clinica);
+  c.body("CONFIDENCIAL · Documento interno de la Red Elementos Financieros. No entregar al cliente.", {bold:true, size:9.5, color:c.RED});
+  datosEstLineas(datosEst).forEach(l=>c.body(l, {size:9.5, color:c.SOFT, lh:13}));
+  c.body(`Levantamiento: ${ev.fecha}${ev.fiscalista?` · Fiscalista asignado: ${ev.fiscalista}`:""}`, {size:9.5, color:c.SOFT, lh:13}); c.y+=6;
+  c.heading(`1. Semáforo: ${FIS_LABEL[r.global]} · Contador actual: ${FIS_LABEL[r.contador]}`);
+  if(r.riesgos.length){ c.body("En riesgo:", {bold:true, size:10.5, color:c.RED}); r.riesgos.forEach(x=>c.body(`•  ${x.t}: ${x.resp}  (${x.grupo})`, {size:10, indent:6, lh:13})); c.y+=4; }
+  if(r.atencion.length){ c.body("Requieren atención:", {bold:true, size:10.5, color:c.GOLD}); r.atencion.forEach(x=>c.body(`•  ${x.t}: ${x.resp || "sin dato"}  (${x.grupo})`, {size:10, indent:6, lh:13})); }
+  c.heading("2. Respuestas completas");
+  r.grupos.forEach(x=>{ c.body(x.g.nombre, {bold:true, size:10.5, color:c.NAVY}); x.items.forEach(i=>c.row(i.p.t, i.resp||"Sin dato")); c.y+=2; });
+  c.heading("3. Documentos");
+  FIS_DOCS.forEach(dd=>c.row(dd.t, ev.documentos[dd.k] || "Sin marcar", ev.documentos[dd.k]==="Pendiente"));
+  c.body("Accesos: la e.firma y la contraseña del SAT las proporciona el médico directamente al fiscalista; no se guardan en la plataforma.", {size:9, color:c.SOFT, lh:12});
+  if(fin){
+    const f = finCalcular(fin.datos, fin.supuestos);
+    c.heading(`4. Resumen financiero (diagnóstico del ${fin.fecha})`);
+    c.row("Venta mensual", finM(f.venta)); c.row("Utilidad operativa mensual", finM(f.utilidad), true); c.row("Retiro del médico", finM(f.retiro));
+    c.row("Sobrante / faltante después de deudas y retiro", finM(f.sobrante), true); c.row("Venta en efectivo al mes", finM(f.ventaEfectivo));
+    c.row("Efectivo de cobros no depositado al mes", finM(f.efectivoNoDepMes)); c.row("Exceso de efectivo total", finM(f.exceso), true);
+    if(f.banderas.length){ c.body("Banderas del diagnóstico financiero:", {bold:true, size:10.5}); f.banderas.forEach(b=>c.body(`•  ${b.t}: ${b.det}`, {size:10, indent:6, lh:13})); }
+    c.body("El detalle completo está en el PDF técnico de Finanzas.", {size:9, color:c.SOFT, lh:12});
+  } else {
+    c.heading("4. Resumen financiero");
+    c.body("Aún no hay diagnóstico financiero de este expediente. Conviene hacerlo para dimensionar el exceso de efectivo.", {size:10});
+  }
+  const pend = ev.pendientes||[];
+  c.heading(`5. Plan de trabajo (${pend.filter(x=>x.estatus==="Resuelto").length}/${pend.length} resueltos)`);
+  if(pend.length) pend.forEach(p=>c.row(p.tarea, p.estatus + (p.fecha?` · ${p.fecha}`:"")));
+  else c.body("Por definir por el fiscalista.", {size:10});
+  c.heading("6. Para cerrar con el médico");
+  ["Confirmar la situación real ante el SAT (opinión de cumplimiento y buzón).","Poner al día lo pendiente y atender requerimientos.","Definir el esquema de facturación correcto, incluido el tratamiento del IVA en servicios estéticos.","Definir cómo se paga el médico y separar clínica y persona.","Ordenar el efectivo no bancarizado para que el exceso de efectivo pueda dirigirse a reserva, protección e inversión."].forEach(t=>c.body("•  "+t, {size:10.5, indent:4}));
+  c.y+=8; c.body("Información declarada por el médico y no verificada contra el SAT. Documento de trabajo para el especialista.", {size:8.5, color:c.SOFT, lh:11});
+  await c.save(`FISCALISTA-PAQUETE-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
 }
 
 /* ------------------------------- Init ------------------------------- */
