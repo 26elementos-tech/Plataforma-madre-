@@ -1532,6 +1532,9 @@ async function render(){
   if(state.screen==="exp-datos") return renderExpDatos();
   if(state.screen==="fin-wizard") return renderFinWizard();
   if(state.screen==="fis-wizard") return renderFisWizard();
+  if(state.screen==="leg-wizard") return renderLegWizard();
+  if(state.screen==="exp-audit") return renderExpAudit();
+  if(state.screen==="leg-resultado") return renderLegResultado();
   if(state.screen==="fis-resultado") return renderFisResultado();
   if(state.screen==="fin-resultado") return renderFinResultado();
   if(state.screen==="op-resultado") return renderOpResultado();
@@ -2831,9 +2834,28 @@ function renderWizStep1(c,w){
       const id = chip.dataset.id;
       const i = w.tipoEstablecimiento.indexOf(id);
       if(i>-1) w.tipoEstablecimiento.splice(i,1); else w.tipoEstablecimiento.push(id);
-      chip.classList.toggle("selected");
+      if(id==="spa" && i>-1){ w.spaServicios = []; spaAplicarClasificacion(w); w.spaTriage = null; }
+      renderWizStep1(c,w);
     };
   });
+  if(w.tipoEstablecimiento.includes("spa")){
+    const r = spaClasificar(w);
+    const card = document.createElement("div"); card.className = "card";
+    card.innerHTML = `<b>¿Qué se hace en las cabinas?</b><p class="muted small" style="margin:4px 0 10px">Marca todo lo que ofrecen. La herramienta clasifica sola el establecimiento.</p>
+      <div class="group-title">Bienestar y belleza</div>
+      <div class="chip-grid">${SPA_SERVICIOS.filter(x=>!x.m).map(x=>`<div class="chip ${(w.spaServicios||[]).includes(x.s)?"selected":""}" data-spa="${esc(x.s)}">${esc(x.s)}</div>`).join("")}</div>
+      <div class="group-title" style="margin-top:10px">Con equipo o procedimiento médico</div>
+      <div class="chip-grid">${SPA_SERVICIOS.filter(x=>x.m).map(x=>`<div class="chip ${(w.spaServicios||[]).includes(x.s)?"selected":""}" data-spa="${esc(x.s)}">${esc(x.s)}</div>`).join("")}</div>
+      ${(w.spaServicios||[]).length ? (r.medico
+        ? `<div style="margin-top:12px;padding:12px;border-radius:10px;background:#FDECEA;color:#8C221B"><b>🚩 Clasificación: clínica de medicina estética${r.aparatologia?" con aparatología":""}</b><div class="small" style="margin-top:4px">Se anuncia como spa, pero ofrece servicios de atención médica (${esc(r.medicosLista.join(", "))}). Se revisará como clínica estética y quedará un hallazgo automático.</div></div>`
+        : `<div style="margin-top:12px;padding:12px;border-radius:10px;background:#E8F3EC;color:#1F5E3A"><b>Clasificación: spa de bienestar y belleza</b><div class="small" style="margin-top:4px">No es un establecimiento de atención médica. Se revisa con la base común.</div></div>`) : ""}`;
+    c.appendChild(card);
+    card.querySelectorAll("[data-spa]").forEach(ch=>ch.onclick=()=>{
+      w.spaServicios = w.spaServicios || []; const k = ch.dataset.spa; const j = w.spaServicios.indexOf(k);
+      if(j>-1) w.spaServicios.splice(j,1); else w.spaServicios.push(k);
+      spaAplicarClasificacion(w); renderWizStep1(c,w);
+    });
+  }
 }
 
 function renderWizStep2(c,w){
@@ -2899,6 +2921,7 @@ function renderWizStep4(c,w){
 async function onWizardEvalNext(){
   const w = state.wizard;
   if(w.step===1 && w.tipoEstablecimiento.length===0){ showError("Selecciona al menos un tipo de establecimiento."); return; }
+  if(w.step===1 && w.tipoEstablecimiento.includes("spa") && !(w.spaServicios||[]).length){ showError("Marca qué se hace en las cabinas del spa para clasificarlo."); return; }
   if(w.step===4){
     if(!w.nivelCheckup){ showError("Selecciona un nivel de check-up."); return; }
     await finishWizardEval();
@@ -2918,6 +2941,7 @@ async function finishWizardEval(){
     generaRPBI: w.generaRPBI, anestesiaSedacion: w.anestesiaSedacion,
     publicidad: w.publicidad || [],
   };
+  if(w.spaTriage) facts.spaTriage = w.spaTriage;
 
   // 1) Resolver servicio_contratado cofepris_checkup. Caso común (ya existe de una
   // visita anterior a este mismo expediente): funciona online u offline por igual.
@@ -2977,6 +3001,14 @@ async function finishWizardEval(){
     await queueOperation("rpc:crear_snapshot_evaluacion", evaluacionId, "CREATE", {p_evaluacion_id: evaluacionId});
   }
 
+  if(facts.spaTriage && facts.spaTriage.medico){
+    try{
+      await persistEntity("hallazgos", newId(), "CREATE", {evaluacion_id: evaluacionId, origen:"libre", clasificacion_id: await getClasifSinClasificar(), created_by: state.profile.id,
+        descripcion: `Se anuncia como spa, pero ofrece servicios de atención médica: ${facts.spaTriage.medicosLista.join(", ")}.`,
+        categoria: "Autorizaciones sanitarias", accion: "Presentar el aviso de funcionamiento como establecimiento de atención médica con fines estéticos, con médico responsable sanitario, o dejar de ofrecer los servicios médicos.",
+        impacto: 4, probabilidad: 4, prioridad: computeManualPrioridad(4,4).toLowerCase(), estatus_accion: "pendiente"});
+    }catch(e){ console.warn("No se pudo crear el hallazgo de spa:", e); }
+  }
   state.wizard = null;
   go("resumen-evaluacion", {currentEvaluacion: evaluacion});
 }
@@ -3101,6 +3133,10 @@ async function renderResumenEvaluacion(){
   const nRegHall = activos.filter(cr => respuestas[cr.id] && ["no_cumple","parcial","pendiente","no_verificado"].includes(respuestas[cr.id].estatus)).length;
   const nHall = nRegHall + (libresRes.data||[]).length;
   hubRow("🚩", "Hallazgos", `${nHall} hallazgo${nHall===1?"":"s"}`, () => document.getElementById("hallazgos-anchor")?.scrollIntoView({behavior:"smooth", block:"start"}), nHall>0);
+  if(dep.codigo==="cofepris"){
+    const nExp = await expaCargar(ev.id).then(r=>((r&&r.campos&&r.campos.expedientes)||[]).length).catch(()=>0);
+    hubRow("📁", "Auditoría de expedientes", nExp ? `${nExp} revisado${nExp===1?"":"s"}` : "Revisa una muestra de 3 a 5 expedientes", () => go("exp-audit", {currentEvaluacion: ev}));
+  }
   hubRow("🧾", "Diagnóstico / PDF", contestados ? "Ver diagnóstico y generar PDF" : "Generar cuando termines el levantamiento", () => go("diagnostico-evaluacion", {currentEvaluacion: ev}));
   const groupsEl = document.getElementById("crit-groups");
   if(activos.length===0){
@@ -4052,6 +4088,41 @@ async function generarPdfDiagnostico(cache, mode){
   }
   y+=4; rule();
 
+  // ---------- Auditoría de expedientes clínicos (si se hizo en la visita) ----------
+  try{
+    const regExp = await expaCargar(ev.id);
+    const expsA = (regExp && regExp.campos && regExp.campos.expedientes) || [];
+    if(expsA.length){
+      const evFacts = ev.facts ? ev : (await sb.from("evaluaciones").select("facts").eq("id", ev.id).single()).data || ev;
+      const itemsA = expaItems({facts: evFacts.facts || {}});
+      const resA = expaResumen(itemsA, expsA);
+      const fallanA = resA.filter(x=>x.fallan).sort((p,q)=>q.fallan/q.evaluados - p.fallan/p.evaluados);
+      checkBreak(60);
+      heading(`Auditoría de expedientes clínicos (${expsA.length} revisado${expsA.length===1?"":"s"})`, 13);
+      body("Se revisó una muestra de expedientes reales, identificados solo por folio o iniciales. Para cada elemento se indica en cuántos expedientes falla.", {size:10, color:SOFT, lh:13});
+      y += 4;
+      if(fallanA.length){
+        fallanA.forEach(x=>{
+          const lines = doc.setFont("helvetica","normal").setFontSize(10.5).splitTextToSize(x.t, maxW-110);
+          checkBreak(lines.length*14 + 16);
+          doc.setTextColor(...INK); lines.forEach((l,k)=>doc.text(l, margin, y + k*14));
+          doc.setFont("helvetica","bold"); doc.setTextColor(179,38,30); doc.text(`${x.fallan} de ${x.evaluados}`, pageW-margin, y, {align:"right"});
+          y += lines.length*14;
+          doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...SOFT); doc.text(x.f, margin, y); y += 13;
+        });
+      } else body("En la muestra revisada no se encontraron fallas.", {size:10.5});
+      y += 6;
+      body("Guía de llenado para todo expediente de este establecimiento", {bold:true, size:11, color:NAVY});
+      [...new Set(itemsA.map(it=>it.grupo))].forEach(g=>{
+        body(g, {bold:true, size:10, lh:14});
+        itemsA.filter(it=>it.grupo===g).forEach(it=> body(`[  ]  ${it.t}${it.rec?" (recomendado)":""}`, {size:9.5, lh:12.5}));
+        y += 3;
+      });
+      body("Conservar cada expediente al menos 5 años desde el último acto médico (NOM-004, 5.4).", {size:9, color:SOFT, lh:12});
+      y += 4; rule();
+    }
+  }catch(audErr){ console.warn("No se pudo agregar la auditoría de expedientes al PDF:", audErr); }
+
   // ---------- Levantamiento de sitio: lo registrado en el inventario (equipos, personal, etc.) ----------
   try{
     const tipoIds = await ensureTipoIds();
@@ -4278,8 +4349,9 @@ async function renderTabClinica(body, exp){
         <button class="action-btn" id="btn-op-new" style="margin-top:10px;margin-bottom:0"><span>+ Nuevo Check-up Operativo</span><span>→</span></button>
       </div>
     </div>
-    <div id="fin-slot"></div><div id="fis-slot"></div>
+    <div id="fin-slot"></div><div id="fis-slot"></div><div id="leg-slot"></div>
     ${renderModulosProximos("Siguientes módulos", "En construcción en la Fase 5.", CLINICA_MODS.filter(m=>!["Procesos","Finanzas","Fiscalidad"].includes(m.nombre)))}`;
+  renderCardLegal(document.getElementById("leg-slot"), exp);
   renderCardFinanzas(document.getElementById("fin-slot"), exp);
   renderCardFiscal(document.getElementById("fis-slot"), exp);
   document.getElementById("btn-op-new").onclick = () => opIniciar(exp);
@@ -5456,6 +5528,609 @@ async function generarPdfFisFiscalista(ev){
   ["Confirmar la situación real ante el SAT (opinión de cumplimiento y buzón).","Poner al día lo pendiente y atender requerimientos.","Definir el esquema de facturación correcto, incluido el tratamiento del IVA en servicios estéticos.","Definir cómo se paga el médico y separar clínica y persona.","Ordenar el efectivo no bancarizado para que el exceso de efectivo pueda dirigirse a reserva, protección e inversión."].forEach(t=>c.body("•  "+t, {size:10.5, indent:4}));
   c.y+=8; c.body("Información declarada por el médico y no verificada contra el SAT. Documento de trabajo para el especialista.", {size:8.5, color:c.SOFT, lh:11});
   await c.save(`FISCALISTA-PAQUETE-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
+}
+
+
+/* =====================================================================================
+   FASE 4 · CLÍNICA · LEGAL Y RIESGOS (leg-v1) — completa el esqueleto: sobre qué está parada la
+   clínica y qué la protege. Preguntas condicionales (socios, empleados, paquetes, local rentado...).
+   Entregables: Mapa de riesgos y protección (médico), paquete confidencial para el abogado de la Red,
+   ficha de suscripción de seguros (interna) y seguimiento. No emite opinión legal.
+   Niveles: v = en orden, a = atención, r = riesgo, n = no aplica.
+   ===================================================================================== */
+const LEG_SOCIOS = d => d.socios==="Sí, tiene socios";
+const LEG_EMPLEADOS = d => (finN(d.numPersonal)||0) > 0;
+const LEG_MORAL = d => d.tipoPersona==="Persona moral";
+const LEG_RENTA = d => d.local && d.local!=="Propio";
+const LEG_GRUPOS = [
+  {id:"estructura", nombre:"Estructura y representación", preguntas:[
+    {k:"tipoPersona", t:"La clínica opera como", o:[["Persona física","v"],["Persona moral","v"],["No sabe","r"]]},
+    {k:"socios", t:"¿Tiene socios?", o:[["No, es solo el médico","v"],["Sí, tiene socios","v"]]},
+    {k:"numSocios", t:"Número de socios (incluido el médico)", num:true, si:LEG_SOCIOS},
+    {k:"acuerdoSocios", t:"Acuerdo de socios", si:LEG_SOCIOS, o:[["Por escrito y actualizado","v"],["Por escrito, pero desactualizado","a"],["Solo de palabra","r"],["No hay","r"]]},
+    {k:"actas", t:"Acta constitutiva y asambleas", si:LEG_MORAL, o:[["Al día","v"],["Desactualizadas","a"],["No sabe","a"]]},
+    {k:"poderes", t:"Representante legal y poderes", o:[["El médico firma por sí mismo (persona física)","v"],["Hay representante con poder vigente","v"],["El poder no está vigente o no se sabe","a"],["Nadie tiene poder para firmar","r"]]},
+  ]},
+  {id:"local", nombre:"Local y permisos", preguntas:[
+    {k:"local", t:"El local es", o:[["Propio","v"],["Rentado","v"],["Prestado o de un familiar","a"],["Dentro de hospital o plaza médica","v"]]},
+    {k:"contratoLocal", t:"Contrato del local", si:LEG_RENTA, o:[["Por escrito, vigencia mayor a 2 años","v"],["Por escrito, vence en menos de 2 años","a"],["Vencido o solo de palabra","r"]]},
+    {k:"revisadoLocal", t:"El contrato del local fue revisado por un abogado", si:LEG_RENTA, o:[["Sí","v"],["No","a"]]},
+    {k:"inversionLocal", t:"Invirtió en remodelación o adecuaciones importantes", si:LEG_RENTA, o:[["Sí","a"],["No","v"]]},
+    {k:"usoSuelo", t:"Uso de suelo para servicios médicos", o:[["Sí","v"],["No","r"],["No sabe","a"]]},
+    {k:"municipal", t:"Licencia o aviso de funcionamiento municipal (alcaldía o municipio)", o:[["Sí","v"],["No","r"],["No sabe","a"]]},
+  ]},
+  {id:"contratos", nombre:"Contratos y personal", preguntas:[
+    {k:"numPersonal", t:"Personas que trabajan en la clínica además del médico", num:true},
+    {k:"externos", t:"Médicos o aplicadores externos", o:[["No hay","n"],["Sí, con contrato por escrito","v"],["Sí, sin contrato","r"]]},
+    {k:"honorariosRiesgo", t:"Personal pagado por honorarios que trabaja con horario fijo y en exclusiva", si:LEG_EMPLEADOS, o:[["No","v"],["Sí, algunos","a"],["Sí, la mayoría","r"]]},
+    {k:"confidencialidad", t:"El personal firmó acuerdo de confidencialidad", si:LEG_EMPLEADOS, o:[["Todos","v"],["Algunos","a"],["Nadie","r"]]},
+    {k:"proveedores", t:"Contratos con proveedores clave (RPBI, mantenimiento, software)", o:[["Todos por escrito","v"],["Algunos","a"],["Ninguno","r"]]},
+    {k:"leasing", t:"Equipos en arrendamiento o a crédito", o:[["No","n"],["Sí, contrato revisado","v"],["Sí, sin revisar","a"]]},
+  ]},
+  {id:"pacientes", nombre:"Pacientes, datos e imagen", preguntas:[
+    {k:"paquetes", t:"Vende paquetes o cobra anticipos", o:[["No","v"],["Sí","v"]]},
+    {k:"terminos", t:"Términos de paquetes y anticipos", si:d=>d.paquetes==="Sí", o:[["Por escrito y firmados por el paciente","v"],["Solo verbales","r"],["No hay","r"]]},
+    {k:"reembolsos", t:"Política de cancelación y reembolso", si:d=>d.paquetes==="Sí", o:[["Por escrito y visible","v"],["Caso por caso","a"],["No hay","r"]]},
+    {k:"privacidad", t:"Aviso de privacidad", o:[["Actualizado y a la vista","v"],["Genérico o desactualizado","a"],["No tiene","r"]]},
+    {k:"imagen", t:"Consentimiento por escrito para usar fotos de pacientes", o:[["Siempre","v"],["A veces","r"],["Nunca","r"],["No publica fotos de pacientes","n"]]},
+    {k:"arco", t:"Procedimiento si un paciente pide sus datos o que se borren", o:[["Existe","v"],["No existe","a"]]},
+    {k:"encargados", t:"Confidencialidad con quien maneja datos (software, agencia)", o:[["Sí","v"],["No","a"],["No aplica","n"]]},
+  ]},
+  {id:"marca", nombre:"Marca y activos digitales", preguntas:[
+    {k:"marca", t:"Marca de la clínica ante el IMPI", o:[["Registrada a nombre del médico o la clínica","v"],["En trámite","a"],["No registrada","r"],["No sabe","a"]]},
+    {k:"redes", t:"Control de las redes sociales", o:[["A nombre de la clínica, accesos del médico","v"],["Las controla un tercero (agencia o empleado)","r"],["No sabe","a"]]},
+    {k:"dominio", t:"Dominio de la página web", o:[["A nombre del médico o la clínica","v"],["A nombre de un tercero","r"],["No tiene página","n"]]},
+    {k:"basePacientes", t:"Base de datos de pacientes", o:[["En sistema de la clínica","v"],["En celular o cuenta personal de alguien","r"],["No hay base","a"]]},
+  ]},
+  {id:"contingencias", nombre:"Contingencias", preguntas:[
+    {k:"quejas", t:"Quejas (CONAMED, Profeco, comisión estatal) en los últimos 5 años", o:[["Ninguna","v"],["Sí, resueltas","a"],["Sí, en curso","r"]]},
+    {k:"demandas", t:"Demandas civiles o penales", o:[["Ninguna","v"],["Sí, resueltas","a"],["Sí, en curso","r"]]},
+    {k:"laborales", t:"Demandas laborales", si:LEG_EMPLEADOS, o:[["Ninguna","v"],["Sí, resueltas","a"],["Sí, en curso","r"]]},
+  ]},
+  {id:"continuidad", nombre:"Continuidad legal", preguntas:[
+    {k:"sucesionClinica", t:"Si el médico falta, está definido quién se queda con la clínica y cómo sigue", o:[["Sí, por escrito","v"],["Se ha platicado","a"],["No","r"]]},
+    {k:"compraventaSocios", t:"Acuerdo de compraventa entre socios ante fallecimiento o invalidez", si:LEG_SOCIOS, o:[["Sí, con fondeo (seguro)","v"],["Sí, sin fondeo","a"],["No","r"]]},
+  ]},
+  {id:"seguros", nombre:"Seguros del negocio", preguntas:[
+    {k:"rc", t:"Seguro de responsabilidad civil profesional médica", o:[["Tiene","v"],["No tiene","r"],["No sabe","r"]]},
+    {k:"rcAseguradora", t:"Aseguradora del RC", txt:true, si:d=>d.rc==="Tiene"},
+    {k:"rcSuma", t:"Suma asegurada del RC (MXN)", num:true, si:d=>d.rc==="Tiene"},
+    {k:"rcVigencia", t:"Vigencia del RC (fecha de fin, AAAA-MM-DD)", txt:true, si:d=>d.rc==="Tiene"},
+    {k:"rcDeducible", t:"Deducible del RC", txt:true, si:d=>d.rc==="Tiene"},
+    {k:"rcEsteticos", t:"El RC cubre procedimientos estéticos", si:d=>d.rc==="Tiene", o:[["Sí","v"],["No","r"],["No sabe","r"]]},
+    {k:"rcPersonal", t:"El RC cubre a todo el personal que aplica tratamientos", si:d=>d.rc==="Tiene", o:[["Sí","v"],["Solo al médico","a"],["No sabe","a"]]},
+    {k:"rcDefensa", t:"Incluye defensa legal", si:d=>d.rc==="Tiene", o:[["Sí","v"],["No","a"],["No sabe","a"]]},
+    {k:"rcRetro", t:"Asegurado sin interrupción desde (año)", txt:true, si:d=>d.rc==="Tiene"},
+    {k:"rcSiniestros", t:"Reclamaciones previas al seguro", o:[["Ninguna","v"],["Sí","a"]]},
+    {k:"rcEstab", t:"RC del establecimiento (daños a terceros en el local)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"danos", t:"Seguro de daños del local, equipos y robo", o:[["Tiene","v"],["No tiene","r"],["No sabe","a"]]},
+    {k:"valorEquipos", t:"Valor aproximado de los equipos (MXN)", num:true},
+    {k:"interrupcion", t:"Seguro por interrupción del negocio", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"personaClave", t:"Seguro de persona clave (la clínica recibe dinero si el médico falta)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"intersocios", t:"Seguro intersocios", si:LEG_SOCIOS, o:[["Tiene","v"],["No tiene","r"],["No sabe","a"]]},
+    {k:"gmmColectivo", t:"GMM colectivo para el equipo", si:LEG_EMPLEADOS, o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"vidaGrupo", t:"Seguro de vida de grupo para el equipo", si:LEG_EMPLEADOS, o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"rcReferencia", t:"Suma de RC de referencia para este tipo de práctica (la defines tú; MXN)", num:true, sup:true},
+  ]},
+];
+const LEG_DOCS = [
+  {k:"acta", t:"Acta constitutiva, asambleas y poderes", si:LEG_MORAL},
+  {k:"acuerdo", t:"Acuerdo de socios", si:LEG_SOCIOS},
+  {k:"arrendamiento", t:"Contrato de arrendamiento del local", si:LEG_RENTA},
+  {k:"municipal", t:"Uso de suelo y licencia o aviso municipal"},
+  {k:"externos", t:"Contratos con médicos y aplicadores externos", si:d=>d.externos && d.externos!=="No hay"},
+  {k:"proveedores", t:"Contratos con proveedores y arrendamientos de equipo"},
+  {k:"laboral", t:"Contratos y acuerdos de confidencialidad del personal", si:LEG_EMPLEADOS},
+  {k:"paquetes", t:"Términos de paquetes y política de reembolsos", si:d=>d.paquetes==="Sí"},
+  {k:"privacidad", t:"Aviso de privacidad y formatos de consentimiento de imagen"},
+  {k:"marca", t:"Título o solicitud de registro de marca"},
+  {k:"contingencias", t:"Documentos de quejas o demandas", si:d=>["quejas","demandas","laborales"].some(k=>d[k] && d[k]!=="Ninguna")},
+  {k:"polizas", t:"Pólizas de seguro vigentes de la clínica"},
+];
+const LEG_SEGUROS = [
+  {k:"rc", t:"Responsabilidad civil profesional médica"}, {k:"rcEstab", t:"RC del establecimiento"}, {k:"danos", t:"Daños, equipos y robo"},
+  {k:"interrupcion", t:"Interrupción del negocio"}, {k:"personaClave", t:"Persona clave"}, {k:"intersocios", t:"Intersocios", si:LEG_SOCIOS},
+  {k:"gmmColectivo", t:"GMM colectivo", si:LEG_EMPLEADOS, nota:"Puede ser deducible como previsión social si cumple requisitos: validar con el fiscalista."},
+  {k:"vidaGrupo", t:"Vida de grupo", si:LEG_EMPLEADOS},
+];
+
+function legCalcular(datos){
+  const d = datos||{};
+  const grupos = LEG_GRUPOS.map(g=>{
+    const items = g.preguntas.filter(p=>!p.sup && !p.num && !p.txt && (!p.si || p.si(d))).map(p=>{ const op = (p.o||[]).find(o=>o[0]===d[p.k]); return {p, resp:d[p.k]||"", nivel: op ? op[1] : "x"}; });
+    const nv = items.map(i=>i.nivel).filter(n=>n!=="n");
+    const nivel = !nv.length ? "n" : nv.includes("r") ? "r" : nv.includes("a") ? "a" : nv.every(n=>n==="x") ? "x" : nv.includes("x") ? "a" : "v";
+    return {g, items, nivel};
+  });
+  // reglas cruzadas
+  const extras = [];
+  if(LEG_RENTA(d) && d.inversionLocal==="Sí" && d.contratoLocal && d.contratoLocal!=="Por escrito, vigencia mayor a 2 años") extras.push({grupo:"Local y permisos", t:"Inversión importante en un local con contrato corto o débil", nivel:"r"});
+  if(LEG_SOCIOS(d) && d.compraventaSocios!=="Sí, con fondeo (seguro)" && d.intersocios!=="Tiene") extras.push({grupo:"Continuidad legal", t:"Socios sin acuerdo de compraventa fondeado por seguro intersocios", nivel:"r"});
+  const ref = finN(d.rcReferencia), suma = finN(d.rcSuma);
+  const brechaRC = (d.rc==="Tiene" && ref && suma!==null && suma<ref) ? ref - suma : null;
+  if(brechaRC) extras.push({grupo:"Seguros del negocio", t:`Suma asegurada de RC por debajo de la referencia (faltan ${finM(brechaRC)})`, nivel:"a"});
+  if(d.rc==="Tiene" && d.rcVigencia && d.rcVigencia < new Date().toISOString().slice(0,10)) extras.push({grupo:"Seguros del negocio", t:"La póliza de RC está vencida", nivel:"r"});
+  const nivelesFrentes = grupos.map(x=>x.nivel).concat(extras.map(e=>e.nivel));
+  const global = nivelesFrentes.includes("r") ? "r" : nivelesFrentes.includes("a") ? "a" : nivelesFrentes.every(n=>n==="x"||n==="n") ? "x" : "v";
+  const riesgos = grupos.flatMap(x=>x.items.filter(i=>i.nivel==="r").map(i=>({grupo:x.g.nombre, t:i.p.t, resp:i.resp}))).concat(extras.filter(e=>e.nivel==="r").map(e=>({grupo:e.grupo, t:e.t, resp:""})));
+  const atencion = grupos.flatMap(x=>x.items.filter(i=>i.nivel==="a").map(i=>({grupo:x.g.nombre, t:i.p.t, resp:i.resp}))).concat(extras.filter(e=>e.nivel==="a").map(e=>({grupo:e.grupo, t:e.t, resp:""})));
+  const seguros = LEG_SEGUROS.filter(s=>!s.si || s.si(d)).map(s=>({...s, estado: d[s.k]||"Sin dato", falta: d[s.k]!=="Tiene"}));
+  return {grupos, extras, global, riesgos, atencion, brechaRC, seguros};
+}
+
+/* ------------------------- Tarjeta en Clínica ------------------------- */
+async function renderCardLegal(container, exp){
+  const card = document.createElement("div");
+  card.className = "card area-card";
+  card.innerHTML = `<div class="area-head" style="cursor:default"><div class="area-icon">⚖️</div>
+    <div style="flex:1;min-width:0"><div class="area-name">Legal y riesgos</div><div class="area-sub">Estructura, contratos, contingencias y seguros del negocio</div></div></div>
+    <div class="area-body"><div id="leg-list"><div class="muted small">Cargando…</div></div>
+    <button class="action-btn" id="btn-leg-new" style="margin-top:10px;margin-bottom:0"><span>+ Nuevo check-up legal y de riesgos</span><span>→</span></button></div>`;
+  container.appendChild(card);
+  card.querySelector("#btn-leg-new").onclick = () => legIniciar(exp);
+  const list = card.querySelector("#leg-list");
+  if(!navigator.onLine){ list.innerHTML = `<div class="empty-note">Sin conexión.</div>`; return; }
+  const { data, error } = await sb.from("evaluaciones_legales").select("*").eq("expediente_id", exp.id).is("anulado_at", null).order("fecha",{ascending:false});
+  if(error){ list.innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
+  list.innerHTML = (data||[]).length ? "" : `<div class="empty-note">Sin check-ups legales todavía.</div>`;
+  (data||[]).forEach(ev=>{
+    const r = legCalcular(ev.datos); const pend = ev.pendientes||[];
+    const row = document.createElement("div"); row.className="small-row"; row.style.cursor="pointer";
+    row.innerHTML = `<span>${esc(ev.fecha)}${pend.length?` · ${pend.filter(x=>x.estatus==="Resuelto").length}/${pend.length} resueltos`:""}</span><span style="font-weight:600;color:${FIS_COLOR[r.global]}">● ${FIS_LABEL[r.global]}</span>`;
+    row.onclick = () => { state.legEval = {...ev, expediente_nombre: exp.nombre_expediente, secIdx:0}; go(ev.estatus==="completada" ? "leg-resultado" : "leg-wizard"); };
+    list.appendChild(row);
+  });
+}
+async function legIniciar(exp){
+  const datos = {};
+  try{
+    const [fis, op] = await Promise.all([
+      sb.from("evaluaciones_fiscales").select("datos").eq("expediente_id", exp.id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1),
+      sb.from("evaluaciones_financieras").select("datos").eq("expediente_id", exp.id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1),
+    ]);
+    const reg = fis.data?.[0]?.datos?.regimen || op.data?.[0]?.datos?.regimen;
+    if(reg) datos.tipoPersona = /moral/i.test(reg) ? "Persona moral" : /física/i.test(reg) ? "Persona física" : undefined;
+    if(datos.tipoPersona==="Persona física") datos.poderes = "El médico firma por sí mismo (persona física)";
+  }catch(e){}
+  state.legEval = {id:null, expediente_id:exp.id, expediente_nombre:exp.nombre_expediente, fecha:new Date().toISOString().slice(0,10), estatus:"borrador", datos, documentos:{}, abogado:"", pendientes:[], secIdx:0};
+  go("leg-wizard");
+}
+async function legGuardar(ev, estatus){
+  if(!navigator.onLine) return {ok:false, offline:true};
+  const row = {expediente_id:ev.expediente_id, fecha:ev.fecha, datos:ev.datos, documentos:ev.documentos, abogado:ev.abogado||null, pendientes:ev.pendientes||[], estatus: estatus||ev.estatus||"borrador"};
+  if(row.estatus==="completada"){ const r = legCalcular(ev.datos); row.resultado = {global:r.global, riesgos:r.riesgos.length, segurosFaltantes:r.seguros.filter(s=>s.falta).map(s=>s.k)}; }
+  const res = ev.id ? await sb.from("evaluaciones_legales").update(row).eq("id", ev.id).select("id").single()
+                    : await sb.from("evaluaciones_legales").insert(row).select("id").single();
+  if(res.error) return {ok:false, error:res.error};
+  ev.id = res.data.id; ev.estatus = row.estatus; return {ok:true};
+}
+
+/* ------------------------- Captura ------------------------- */
+function renderLegWizard(){
+  const ev = state.legEval; if(!ev){ go("dashboard"); return; }
+  const total = LEG_GRUPOS.length + 1, esDocs = ev.secIdx === LEG_GRUPOS.length;
+  const g = esDocs ? null : LEG_GRUPOS[ev.secIdx]; const d = ev.datos;
+  $app.innerHTML = `
+    <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+      <div style="flex:1"><p class="brand">LEGAL Y RIESGOS · ${ev.secIdx+1} DE ${total}</p><h1 style="font-size:18px">${esDocs?"Documentos para el abogado":esc(g.nombre)}</h1></div></div>
+      <div style="height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin-top:10px"><div style="height:4px;width:${Math.round(100*(ev.secIdx+1)/total)}%;background:var(--gold-500);border-radius:2px"></div></div></div>
+    <div class="content">
+      <p class="muted small" style="margin:0 0 10px">${esDocs ? "Marca qué te entregó el médico (copias)." : "Las preguntas se ajustan según las respuestas: socios, personal, local, paquetes."}</p>
+      <div id="leg-form"></div>
+      <div id="leg-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
+      <div style="display:flex;gap:10px">${ev.secIdx>0?`<button class="btn btn-ghost" id="leg-prev" style="flex:1">← Anterior</button>`:""}
+        <button class="btn btn-primary" id="leg-next" style="flex:2">${ev.secIdx===total-1?"Ver resultado →":"Siguiente →"}</button></div>
+    </div>`;
+  const form = document.getElementById("leg-form");
+  const pintar = () => {
+    form.innerHTML = "";
+    if(esDocs){
+      LEG_DOCS.filter(dd=>!dd.si || dd.si(d)).forEach(dd=>{
+        const card = document.createElement("div"); card.className="card"; card.style.padding="12px";
+        const cur = ev.documentos[dd.k]||"";
+        card.innerHTML = `<div style="font-weight:500;margin-bottom:8px">${esc(dd.t)}</div><div class="chip-grid">${["Entregado","Pendiente","No aplica"].map(o=>`<span class="chip ${cur===o?"selected":""}" data-o="${o}">${o}</span>`).join("")}</div>`;
+        card.querySelectorAll(".chip").forEach(ch=>ch.onclick=()=>{ ev.documentos[dd.k]=ch.dataset.o; card.querySelectorAll(".chip").forEach(x=>x.classList.toggle("selected",x===ch)); });
+        form.appendChild(card);
+      });
+      return;
+    }
+    g.preguntas.filter(p=>!p.si || p.si(d)).forEach(p=>{
+      const card = document.createElement("div"); card.className="card"; card.style.padding="12px";
+      if(p.num || p.txt){
+        card.innerHTML = `<div style="font-weight:500;margin-bottom:8px">${esc(p.t)}</div><input type="text" ${p.num?'inputmode="decimal"':""} value="${esc(d[p.k]??"")}">${p.sup?`<p class="muted small" style="margin:6px 0 0">Supuesto tuyo: el reporte compara la suma del médico contra este parámetro.</p>`:""}`;
+        card.querySelector("input").addEventListener("change", e=>{ d[p.k] = e.target.value.trim(); pintar(); });
+      } else {
+        card.innerHTML = `<div style="font-weight:500;margin-bottom:8px">${esc(p.t)}</div>` + p.o.map(([val,n])=>`<div class="op-opt ${d[p.k]===val?"selected":""}" data-val="${esc(val)}"><span class="op-lvl" style="background:${FIS_COLOR[n]}">●</span><span>${esc(val)}</span></div>`).join("");
+        card.querySelectorAll(".op-opt").forEach(o=>o.onclick=()=>{ d[p.k] = o.dataset.val; pintar(); });
+      }
+      form.appendChild(card);
+    });
+  };
+  pintar();
+  const guardar = async () => { const r = await legGuardar(ev); if(!r.ok){ const n=document.getElementById("leg-note"); if(n) n.textContent = r.offline ? "📴 Sin conexión: se guardará al recuperar señal." : "No se pudo guardar: "+(r.error?.message||""); } };
+  document.getElementById("btn-back").onclick = async () => { await guardar(); go("expediente", {currentExpediente:{id:ev.expediente_id, nombre_expediente:ev.expediente_nombre}}); };
+  const prev = document.getElementById("leg-prev"); if(prev) prev.onclick = async ()=>{ await guardar(); ev.secIdx--; go("leg-wizard"); };
+  document.getElementById("leg-next").onclick = async ()=>{ await guardar(); if(ev.secIdx<total-1){ ev.secIdx++; go("leg-wizard"); } else go("leg-resultado"); };
+}
+
+/* ------------------------- Resultado + seguimiento ------------------------- */
+function renderLegResultado(){
+  const ev = state.legEval; if(!ev){ go("dashboard"); return; }
+  const r = legCalcular(ev.datos); const pend = ev.pendientes = ev.pendientes||[];
+  const docsAplican = LEG_DOCS.filter(dd=>(!dd.si || dd.si(ev.datos)) && ev.documentos[dd.k]!=="No aplica");
+  $app.innerHTML = `
+    <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+      <div style="flex:1"><p class="brand">LEGAL Y RIESGOS</p><h1 style="font-size:18px">${esc(ev.expediente_nombre||"")}</h1></div></div></div>
+    <div class="content">
+      <div class="card" style="display:flex;align-items:center;gap:14px">
+        <div style="width:58px;height:58px;border-radius:50%;background:${FIS_COLOR[r.global]};flex-shrink:0"></div>
+        <div><div class="area-name">Riesgo legal y de protección: ${FIS_LABEL[r.global]}</div><div class="area-sub">${r.riesgos.length} en riesgo · ${r.atencion.length} requieren atención</div></div>
+      </div>
+      <div class="card"><div class="section-title">Por frente</div>${r.grupos.filter(x=>x.nivel!=="n").map(x=>`<div class="small-row"><span>${esc(x.g.nombre)}</span><b style="color:${FIS_COLOR[x.nivel]}">● ${FIS_LABEL[x.nivel]}</b></div>`).join("")}</div>
+      <div class="card"><div class="section-title">Seguros del negocio</div>${r.seguros.map(s=>`<div class="small-row"><span>${esc(s.t)}</span><b style="color:${s.falta?"#B3261E":"#2E7D4F"}">${esc(s.estado)}</b></div>`).join("")}
+        ${r.brechaRC?`<p class="small" style="color:#B8860B;margin:6px 0 0">Brecha de RC: ${finM(r.brechaRC)} contra tu referencia.</p>`:""}</div>
+      <div class="card"><div class="section-title">Paquete para el abogado</div>
+        <div class="small-row"><span>Documentos entregados</span><b>${docsAplican.filter(dd=>ev.documentos[dd.k]==="Entregado").length} de ${docsAplican.length}</b></div>
+        <label class="small muted" style="margin-top:8px">Abogado de la Red asignado</label>
+        <input type="text" id="leg-abogado" value="${esc(ev.abogado||"")}" placeholder="Nombre del abogado"></div>
+      <div class="card"><div class="section-title">Seguimiento del abogado (${pend.filter(x=>x.estatus==="Resuelto").length}/${pend.length} resueltos)</div>
+        <div id="leg-pend"></div>
+        <button class="btn btn-ghost" id="leg-add-pend" style="margin-top:8px">+ Agregar pendiente</button>
+        ${!pend.length && r.riesgos.length ? `<button class="btn btn-ghost" id="leg-sugerir" style="margin-top:6px">Crear pendientes a partir de los riesgos</button>` : ""}</div>
+      <div id="leg-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
+      ${ev.estatus!=="completada"?`<button class="action-btn" id="leg-complete"><span>✓ Marcar como completado</span><span>→</span></button>`:""}
+      <button class="action-btn" id="leg-pdf-med" style="background:var(--navy-800)"><span>🛡 Mapa de riesgos y protección (médico)</span><span>→</span></button>
+      <button class="action-btn" id="leg-pdf-abo" style="background:#3a2f1a"><span>🔒 Paquete para el abogado (PDF)</span><span>→</span></button>
+      <button class="action-btn" id="leg-pdf-sus" style="background:#2c3e50"><span>📋 Ficha de suscripción de seguros (interna)</span><span>→</span></button>
+      <button class="btn btn-ghost" id="leg-edit" style="margin-top:4px">Editar respuestas y documentos</button>
+    </div>`;
+  const guardar = async () => { const x = await legGuardar(ev); const n = document.getElementById("leg-note"); if(n) n.textContent = x.ok ? "Guardado." : (x.offline ? "📴 Sin conexión." : "No se pudo guardar."); };
+  document.getElementById("leg-abogado").addEventListener("change", e=>{ ev.abogado = e.target.value.trim(); guardar(); });
+  const pl = document.getElementById("leg-pend"); const EST = ["Pendiente","En proceso","Resuelto"];
+  pend.forEach((x,i)=>{
+    const row = document.createElement("div"); row.className="small-row"; row.style.display="block";
+    row.innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(x.tarea)}</span><span class="muted small">${esc(x.fecha||"")}</span></div>
+      <div class="chip-grid" style="margin-top:6px">${EST.map(e=>`<span class="chip ${x.estatus===e?"selected":""}" data-e="${e}">${e}</span>`).join("")}<span class="chip" data-del="1">✕</span></div>`;
+    row.querySelectorAll("[data-e]").forEach(ch=>ch.onclick=async()=>{ x.estatus=ch.dataset.e; await guardar(); renderLegResultado(); });
+    row.querySelector("[data-del]").onclick = async()=>{ pend.splice(i,1); await guardar(); renderLegResultado(); };
+    pl.appendChild(row);
+  });
+  if(!pend.length) pl.innerHTML = `<div class="muted small">Sin pendientes. Agrégalos cuando el abogado defina su plan.</div>`;
+  document.getElementById("leg-add-pend").onclick = async ()=>{ const t = await askText("Nuevo pendiente del abogado","Tarea","Ej. Redactar acuerdo de socios"); if(!t||!t.trim()) return;
+    const f = await askText("Fecha objetivo (opcional)","AAAA-MM-DD",""); pend.push({tarea:t.trim(), estatus:"Pendiente", fecha:(f||"").trim()}); await guardar(); renderLegResultado(); };
+  const bs = document.getElementById("leg-sugerir");
+  if(bs) bs.onclick = async ()=>{ r.riesgos.filter(x=>x.grupo!=="Seguros del negocio").forEach(x=>pend.push({tarea:`Atender: ${x.t}${x.resp?` (${x.resp})`:""}`, estatus:"Pendiente", fecha:""})); await guardar(); renderLegResultado(); };
+  document.getElementById("btn-back").onclick = () => go("expediente", {currentExpediente:{id:ev.expediente_id, nombre_expediente:ev.expediente_nombre}});
+  document.getElementById("leg-edit").onclick = () => { ev.secIdx = 0; go("leg-wizard"); };
+  const bc = document.getElementById("leg-complete");
+  if(bc) bc.onclick = async ()=>{ const x = await legGuardar(ev,"completada"); if(!x.ok){ showError(x.offline?"Completar necesita conexión.":"No se pudo guardar: "+(x.error?.message||"")); return; } go("leg-resultado"); };
+  const pdfBtn = (id, fn) => { document.getElementById(id).onclick = async (e)=>{ const b=e.currentTarget; b.disabled=true; try{ await fn(ev); }catch(err){ showError("No se pudo generar el PDF: "+(err&&err.message?err.message:err)); } b.disabled=false; }; };
+  pdfBtn("leg-pdf-med", generarPdfLegMedico); pdfBtn("leg-pdf-abo", generarPdfLegAbogado); pdfBtn("leg-pdf-sus", generarPdfLegSuscripcion);
+}
+
+/* ------------------------- PDFs ------------------------- */
+async function generarPdfLegMedico(ev){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
+  const r = legCalcular(ev.datos); const datosEst = await getDatosEst(ev.expediente_id);
+  const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
+  const c = finPdfBase(); const {doc} = c;
+  drawPortadaPdf(doc, {titulo:"Mapa de riesgos y protección", subtitulo:"Sobre qué está parada tu clínica y qué la protege", cliente:clinica, detalle:`Fecha: ${ev.fecha}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
+  c.header("Riesgos y protección de tu clínica", clinica);
+  c.checkBreak(90); fisLuz(c, c.margin+28, c.y+24, r.global, 26);
+  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.setTextColor(...c.NAVY); doc.text(`Estado general: ${FIS_LABEL[r.global]}`, c.margin+70, c.y+18);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK); doc.text(`${r.riesgos.length} riesgo(s) · ${r.atencion.length} punto(s) que requieren atención`, c.margin+70, c.y+36);
+  c.y += 70;
+  c.body("Este mapa resume lo que podría poner en riesgo tu clínica: su estructura, su local, sus contratos, la relación con pacientes, su marca y qué tan protegida está. No es una opinión legal: muestra dónde conviene que un especialista revise.", {size:10, color:c.SOFT, lh:14}); c.y+=6;
+  if(r.riesgos.length){ c.heading("Lo más urgente"); r.riesgos.forEach(x=>{ c.checkBreak(20); fisLuz(c, c.margin+6, c.y-4, "r", 4.5); doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK);
+    doc.splitTextToSize(`${x.t}${x.resp?` — ${x.resp}`:""}`, c.maxW-20).forEach((l,i)=>{ doc.text(l, c.margin+18, c.y); c.y+=14; }); c.y+=3; }); }
+  r.grupos.filter(x=>x.nivel!=="n").forEach(x=>{
+    c.heading(x.g.nombre + "  ·  " + FIS_LABEL[x.nivel]);
+    x.items.filter(i=>i.nivel!=="n").forEach(i=>{ c.checkBreak(20); fisLuz(c, c.margin+6, c.y-4, i.nivel, 4.5);
+      doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK); doc.text(doc.splitTextToSize(i.p.t, c.maxW-200)[0], c.margin+18, c.y);
+      doc.setTextColor(...c.SOFT); doc.text(doc.splitTextToSize(i.resp||"Sin dato", 180)[0], c.pageW-c.margin, c.y, {align:"right"}); c.y+=17; });
+  });
+  c.heading("Tu protección hoy");
+  r.seguros.forEach(s=>c.row(s.t, s.estado, s.falta));
+  if(r.brechaRC) c.body(`Tu seguro de responsabilidad civil queda ${finM(r.brechaRC)} por debajo de la suma de referencia para tu tipo de práctica.`, {size:10, color:c.GOLD});
+  const pend = ev.pendientes||[];
+  if(pend.length){ c.heading(`Avance de tu abogado: ${pend.filter(x=>x.estatus==="Resuelto").length} de ${pend.length} resueltos`); pend.forEach(p=>c.row(p.tarea, p.estatus + (p.fecha?` · ${p.fecha}`:""), p.estatus==="Resuelto")); }
+  c.y+=6; c.checkBreak(80); doc.setFillColor(241,231,210); doc.roundedRect(c.margin, c.y, c.maxW, 66, 6, 6, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.setTextColor(...c.NAVY); doc.text("Siguientes pasos", c.margin+14, c.y+20);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(...c.INK);
+  doc.splitTextToSize(`1) Revisión con el abogado de la Red Elementos Financieros${ev.abogado?` (${ev.abogado})`:""} para ordenar contratos, estructura y continuidad. 2) Revisión de protección con Elementos Financieros para cerrar las brechas de seguro de tu clínica.`, c.maxW-28).forEach((l,i)=>doc.text(l, c.margin+14, c.y+36+i*13));
+  c.y += 82;
+  c.body("Mapa elaborado con información proporcionada por el médico. No constituye opinión legal ni recomendación de un producto de seguro específico.", {size:8.5, color:c.SOFT, lh:11});
+  await c.save(`MAPA-RIESGOS-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
+}
+async function generarPdfLegAbogado(ev){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
+  const r = legCalcular(ev.datos); const datosEst = await getDatosEst(ev.expediente_id); const d = ev.datos;
+  const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
+  const c = finPdfBase();
+  c.header("Paquete de entrada — abogado", clinica);
+  c.body("CONFIDENCIAL · Documento interno de la Red Elementos Financieros. No entregar al cliente.", {bold:true, size:9.5, color:c.RED});
+  datosEstLineas(datosEst).forEach(l=>c.body(l, {size:9.5, color:c.SOFT, lh:13}));
+  c.body(`Levantamiento: ${ev.fecha}${ev.abogado?` · Abogado asignado: ${ev.abogado}`:""}`, {size:9.5, color:c.SOFT, lh:13}); c.y+=6;
+  c.heading(`1. Estado general: ${FIS_LABEL[r.global]}`);
+  if(r.riesgos.length){ c.body("Riesgos:", {bold:true, size:10.5, color:c.RED}); r.riesgos.forEach(x=>c.body(`•  ${x.t}${x.resp?`: ${x.resp}`:""}  (${x.grupo})`, {size:10, indent:6, lh:13})); c.y+=4; }
+  if(r.atencion.length){ c.body("Requieren atención:", {bold:true, size:10.5, color:c.GOLD}); r.atencion.forEach(x=>c.body(`•  ${x.t}${x.resp?`: ${x.resp}`:""}  (${x.grupo})`, {size:10, indent:6, lh:13})); }
+  c.heading("2. Respuestas completas");
+  LEG_GRUPOS.filter(g=>g.id!=="seguros").forEach(g=>{ const ps = g.preguntas.filter(p=>!p.si || p.si(d)); if(!ps.length) return; c.body(g.nombre, {bold:true, size:10.5, color:c.NAVY}); ps.forEach(p=>c.row(p.t, d[p.k]||"Sin dato")); c.y+=2; });
+  c.heading("3. Documentos");
+  LEG_DOCS.filter(dd=>!dd.si || dd.si(d)).forEach(dd=>c.row(dd.t, ev.documentos[dd.k]||"Sin marcar", ev.documentos[dd.k]==="Pendiente"));
+  c.heading("4. Seguros vigentes (para coordinar contratos y cláusulas)");
+  r.seguros.forEach(s=>c.row(s.t, s.estado));
+  const pend = ev.pendientes||[];
+  c.heading(`5. Plan de trabajo (${pend.filter(x=>x.estatus==="Resuelto").length}/${pend.length} resueltos)`);
+  if(pend.length) pend.forEach(p=>c.row(p.tarea, p.estatus + (p.fecha?` · ${p.fecha}`:""))); else c.body("Por definir por el abogado.", {size:10});
+  c.heading("6. Para cerrar con el médico");
+  const pts = [];
+  if(LEG_SOCIOS(d)) pts.push("Acuerdo de socios con cláusula de compraventa ante fallecimiento o invalidez, coordinado con el seguro intersocios.");
+  if(LEG_RENTA(d)) pts.push("Revisión o renegociación del contrato del local (plazo, renovación, inversión y salida).");
+  pts.push("Contratos con médicos, aplicadores y proveedores; revisar riesgo laboral del personal por honorarios.");
+  pts.push("Términos con pacientes, aviso de privacidad, consentimiento de imagen y procedimiento de derechos sobre datos.");
+  pts.push("Registro de marca y titularidad de redes, dominio y base de pacientes.");
+  pts.push("Continuidad: qué pasa con la clínica si el médico falta (coordinar con la fase patrimonial).");
+  pts.forEach(t=>c.body("•  "+t, {size:10.5, indent:4}));
+  c.y+=8; c.body("Información declarada por el médico y no verificada documentalmente. Documento de trabajo para el especialista.", {size:8.5, color:c.SOFT, lh:11});
+  await c.save(`ABOGADO-PAQUETE-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
+}
+async function generarPdfLegSuscripcion(ev){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
+  const r = legCalcular(ev.datos); const d = ev.datos; const datosEst = await getDatosEst(ev.expediente_id);
+  const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
+  let fin = null, trats = [];
+  try{ const { data } = await sb.from("evaluaciones_financieras").select("*").eq("expediente_id", ev.expediente_id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1); if(data && data[0]){ fin = finCalcular(data[0].datos, data[0].supuestos); trats = fin.tr; } }catch(e){}
+  const c = finPdfBase();
+  c.header("Ficha de suscripción — seguros del negocio", clinica);
+  c.body("USO INTERNO · Elementos Financieros. Datos para cotizar; confirmar con el médico antes de enviar a la aseguradora.", {bold:true, size:9.5, color:c.RED});
+  datosEstLineas(datosEst).forEach(l=>c.body(l, {size:9.5, color:c.SOFT, lh:13})); c.y+=6;
+  c.heading("1. Perfil del riesgo");
+  c.row("Tipo de persona", d.tipoPersona||"—"); c.row("Socios", LEG_SOCIOS(d) ? (d.numSocios||"Sí") : "No");
+  c.row("Personas que trabajan además del médico", d.numPersonal||"—"); c.row("Médicos o aplicadores externos", d.externos||"—");
+  c.row("Facturación anual estimada", fin ? finM(fin.venta*12) : "—"); c.row("Valor aproximado de equipos", finM(finN(d.valorEquipos)));
+  c.row("Local", d.local||"—"); c.row("Quejas / demandas previas", `${d.quejas||"—"} / ${d.demandas||"—"}`); c.row("Reclamaciones previas al seguro", d.rcSiniestros||"—");
+  if(trats.length){ c.body("Procedimientos principales:", {bold:true, size:10.5}); trats.forEach(t=>c.row(t.nombre, `${t.cantidad} al mes`)); }
+  else c.body("Procedimientos: completar en el diagnóstico financiero o al confirmar con el médico.", {size:10, color:c.SOFT});
+  c.heading("2. RC profesional actual");
+  if(d.rc==="Tiene"){ [["Aseguradora","rcAseguradora"],["Suma asegurada","rcSuma"],["Vigencia","rcVigencia"],["Deducible","rcDeducible"],["Cubre estéticos","rcEsteticos"],["Cubre a todo el personal","rcPersonal"],["Defensa legal","rcDefensa"],["Asegurado sin interrupción desde","rcRetro"]].forEach(([l,k])=>c.row(l, k==="rcSuma"?finM(finN(d[k])):(d[k]||"—")));
+    if(r.brechaRC) c.row("Brecha contra referencia", finM(r.brechaRC), true); }
+  else c.body(`Sin póliza (${d.rc||"sin dato"}).`, {size:10.5, color:c.RED});
+  c.heading("3. Seguros a cotizar");
+  const cot = r.seguros.filter(s=>s.falta);
+  if(cot.length) cot.forEach(s=>{ c.row(s.t, s.estado, true); if(s.nota) c.body(s.nota, {size:9, color:c.SOFT, lh:12, indent:6}); });
+  else c.body("La clínica tiene todos los seguros aplicables; revisar sumas, exclusiones y vigencias en la renovación.", {size:10});
+  if(r.seguros.find(s=>s.k==="rc" && !s.falta) && d.rcEsteticos!=="Sí") c.body("Prioridad: confirmar que la póliza de RC cubra procedimientos estéticos; si no, cotizar una que sí.", {bold:true, size:10, color:c.RED});
+  c.y+=8; c.body("Recordatorio: el diagnóstico es neutral; informar al médico que Elementos Financieros también puede cotizar y que puede comparar con otras opciones.", {size:8.5, color:c.SOFT, lh:11});
+  await c.save(`FICHA-SUSCRIPCION-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
+}
+
+
+/* ------------------------- Spa: clasificación automática por servicios -------------------------
+   Si se elige "Spa", la herramienta pregunta qué se hace en las cabinas. Si hay servicios médicos
+   (aparatología, inyectables, peelings médicos), reclasifica como clínica de medicina estética
+   no quirúrgica (+ aparatología) y deja un hallazgo automático. */
+const SPA_SERVICIOS = [
+  {s:"Masajes", m:false}, {s:"Faciales con cosméticos", m:false}, {s:"Depilación con cera", m:false},
+  {s:"Envolturas y exfoliación corporal", m:false}, {s:"Manicure y pedicure", m:false},
+  {s:"Depilación láser o IPL", m:true, ap:true, sv:["Depilación láser","Láser dermatológico"]},
+  {s:"Radiofrecuencia", m:true, ap:true, sv:["Radiofrecuencia"]},
+  {s:"HIFU (ultrasonido focalizado)", m:true, ap:true, sv:["Tratamientos faciales"]},
+  {s:"Criolipólisis", m:true, ap:true, sv:["Tratamientos corporales"]},
+  {s:"Cavitación", m:true, ap:true, sv:["Tratamientos corporales"]},
+  {s:"Láser facial o dermatológico", m:true, ap:true, sv:["Láser dermatológico"]},
+  {s:"Hidrafacial o microdermoabrasión con equipo", m:true, ap:true, sv:["Hidrafacial"]},
+  {s:"Microneedling o dermapen", m:true, sv:["Microneedling"]},
+  {s:"Peelings químicos", m:true, sv:["Peelings"]},
+  {s:"Mesoterapia o inyectables", m:true, sv:["Mesoterapia","Inyectables"]},
+  {s:"Toxina botulínica", m:true, sv:["Toxina botulínica"]},
+  {s:"Rellenos (ácido hialurónico)", m:true, sv:["Ácido hialurónico"]},
+];
+function spaClasificar(w){
+  const sel = SPA_SERVICIOS.filter(x=>(w.spaServicios||[]).includes(x.s));
+  const medicos = sel.filter(x=>x.m);
+  const out = {medico: medicos.length>0, aparatologia: medicos.some(x=>x.ap), servicios: [...new Set(medicos.flatMap(x=>x.sv||[]))], medicosLista: medicos.map(x=>x.s)};
+  return out;
+}
+function spaAplicarClasificacion(w){
+  const r = spaClasificar(w);
+  w.spaAuto = w.spaAuto || {tipos:[], servicios:[]};
+  // quitar lo que la clasificación anterior agregó
+  w.tipoEstablecimiento = w.tipoEstablecimiento.filter(t=>!w.spaAuto.tipos.includes(t));
+  w.servicios = w.servicios.filter(s=>!w.spaAuto.servicios.includes(s));
+  const tipos = [];
+  if(r.medico && !w.tipoEstablecimiento.includes("clinica_estetica_no_qx")) tipos.push("clinica_estetica_no_qx");
+  if(r.aparatologia && !w.tipoEstablecimiento.includes("aparatologia")) tipos.push("aparatologia");
+  const servicios = r.servicios.filter(s=>!w.servicios.includes(s));
+  w.tipoEstablecimiento.push(...tipos); w.servicios.push(...servicios);
+  w.spaAuto = {tipos, servicios};
+  w.spaTriage = {servicios: w.spaServicios||[], medico: r.medico, aparatologia: r.aparatologia, medicosLista: r.medicosLista};
+  return r;
+}
+
+/* ------------------------- Auditoría de expedientes clínicos por especialidad -------------------------
+   Muestra de 3 a 5 expedientes reales (folio o iniciales, nunca nombre completo). El checklist se
+   arma según los servicios de la evaluación. Fuentes: NOM-004-SSA3-2012, NOM-013-SSA2-2015,
+   NOM-006-SSA3-2011 y Guía de autoverificación COFEPRIS (estética, 2026). rec = recomendado. */
+const EXPA_ITEMS = {
+  base: {label:"Base (todo expediente médico)", items:[
+    {k:"b1", t:"Datos del establecimiento: tipo, nombre, domicilio y, en su caso, razón social", f:"NOM-004, 5.2.1–5.2.2"},
+    {k:"b2", t:"Identificación del paciente: nombre, sexo, edad y domicilio", f:"NOM-004, 5.2.3"},
+    {k:"b3", t:"Historia clínica: interrogatorio (identificación, heredofamiliares, personales patológicos y no patológicos, padecimiento actual, aparatos y sistemas)", f:"NOM-004, 6.1.1"},
+    {k:"b4", t:"Exploración física con signos vitales, peso y talla", f:"NOM-004, 6.1.2"},
+    {k:"b5", t:"Diagnóstico, pronóstico e indicación terapéutica", f:"NOM-004, 6.1.4–6.1.6"},
+    {k:"b6", t:"Nota de evolución en cada atención", f:"NOM-004, 6.2"},
+    {k:"b7", t:"Medicamentos con dosis, vía de administración y periodicidad", f:"NOM-004, 6.2.6"},
+    {k:"b8", t:"Cada nota con fecha, hora, nombre completo y firma de quien la elabora", f:"NOM-004, 5.10"},
+    {k:"b9", t:"Lenguaje técnico, sin abreviaturas, letra legible, sin tachaduras ni enmendaduras", f:"NOM-004, 5.11"},
+    {k:"b10", t:"Consentimiento informado completo cuando el procedimiento lo requiere (acto, riesgos y beneficios, autorización para contingencias, firmas del paciente, del médico y de dos testigos)", f:"NOM-004, 10.1"},
+    {k:"b11", t:"Autorización escrita del paciente para usar fotografías que lo identifiquen", f:"NOM-004, 5.5"},
+    {k:"b12", t:"Copia del contrato o paquete contratado, si existe", f:"NOM-004, 5.19"},
+    {k:"b13", t:"Un solo expediente por paciente con todas las notas de quienes lo atienden", f:"NOM-004, 5.14"},
+  ]},
+  estetica: {label:"Medicina estética no quirúrgica", items:[
+    {k:"e1", t:"Producto aplicado identificado (nombre, lote y caducidad); en multidosis, registrado en la bitácora", f:"Guía de autoverificación COFEPRIS estética 2026; NOM-004, 6.2.6"},
+    {k:"e2", t:"Consentimiento específico por procedimiento (toxina, relleno, láser, etc.)", f:"NOM-004, 10.1.2.8 (alto riesgo a criterio del médico)", rec:true},
+    {k:"e3", t:"Fotografías clínicas de antes y después integradas al expediente", f:"Buena práctica", rec:true},
+  ]},
+  dental: {label:"Dental", items:[
+    {k:"d1", t:"Identificación del consultorio, del estomatólogo, del paciente y fecha", f:"NOM-013, 9.1"},
+    {k:"d2", t:"Historia clínica con factores de riesgo, antecedentes, exploración de cavidad bucal, cabeza y cuello, signos vitales, peso y talla", f:"NOM-013, 9.2"},
+    {k:"d3", t:"Odontograma inicial y periodontograma con nomenclatura FDI", f:"NOM-013, 9.2.2.8"},
+    {k:"d4", t:"Odontograma y periodontograma de seguimiento, firmado por el paciente al alta", f:"NOM-013, 9.2.2.9"},
+    {k:"d5", t:"Diagnóstico según CIE y plan de tratamiento por fases", f:"NOM-013, 9.2.2.11–12"},
+    {k:"d6", t:"Notas de evolución en cada cita con firma del estomatólogo y del paciente", f:"NOM-013, 9.3 y 9.3.7"},
+    {k:"d7", t:"Medicamentos: principio activo, presentación, dosis, vía, periodicidad, duración y posibles efectos adversos", f:"NOM-013, 9.3.6"},
+    {k:"d8", t:"Consentimiento por procedimiento con alternativas explicadas y firmas del estomatólogo, paciente y un testigo; uno nuevo si cambia el plan", f:"NOM-013, 9.6"},
+  ]},
+  quirurgico: {label:"Cirugía y procedimientos con anestesia", items:[
+    {k:"q1", t:"Nota preoperatoria: fecha, diagnóstico, plan quirúrgico, tipo de intervención, riesgo, cuidados y pronóstico", f:"NOM-004, 8.5"},
+    {k:"q2", t:"Valoración preanestésica", f:"NOM-006-SSA3-2011; NOM-004, 8.7"},
+    {k:"q3", t:"Registro anestésico (vigilancia transanestésica)", f:"NOM-006-SSA3-2011; NOM-004, 8.7"},
+    {k:"q4", t:"Nota postoperatoria completa: técnica, hallazgos, conteo de gasas e instrumental, sangrado, incidentes, ayudantes y plan", f:"NOM-004, 8.8"},
+    {k:"q5", t:"Consentimientos de cirugía y de anestesia", f:"NOM-004, 10.1.2.2–10.1.2.3"},
+    {k:"q6", t:"Hoja de enfermería: signos vitales, medicamentos con fecha, hora, cantidad y vía", f:"NOM-004, 9.1"},
+    {k:"q7", t:"Nota de egreso", f:"NOM-004, 8.9"},
+    {k:"q8", t:"Lista de verificación de cirugía segura (OMS)", f:"NOM-004, 8.6", rec:true},
+  ]},
+};
+function expaPlantillas(ev){
+  const f = ev.facts || {}; const T = f.tipoEstablecimiento||[]; const S = f.servicios||[];
+  const estS = ["Toxina botulínica","Ácido hialurónico","Bioestimuladores","Skinboosters","Mesoterapia","Microneedling","Peelings","Radiofrecuencia","Depilación láser","Láser dermatológico","Inyectables"];
+  const dental = T.includes("dental") || S.some(s=>["Consulta odontológica","Procedimientos odontológicos","Cirugía dental","Restauraciones con amalgama"].includes(s));
+  const medico = T.some(t=>["consultorio_general","consultorio_especialidad","clinica_estetica_no_qx","clinica_estetica_invasiva","establecimiento_quirurgico","hospital","quirofano"].includes(t)) || S.some(s=>estS.includes(s)||["Consulta general","Consulta de especialidad","Valoración médica","Cirugía estética"].includes(s));
+  const estetica = T.includes("clinica_estetica_no_qx") || T.includes("clinica_estetica_invasiva") || S.some(s=>estS.includes(s));
+  const quir = T.some(t=>["establecimiento_quirurgico","hospital","quirofano","clinica_estetica_invasiva"].includes(t)) || S.some(s=>["Cirugía estética","Cirugía ambulatoria","Procedimientos bajo anestesia"].includes(s)) || f.anestesiaSedacion==="si";
+  const out = [];
+  if(medico) out.push("base"); if(estetica) out.push("estetica"); if(dental) out.push("dental"); if(quir) out.push("quirurgico");
+  if(dental && !medico) out.push("base_formal"); // dentista solo: formalidades de NOM-004 aplicables
+  return out;
+}
+function expaItems(ev){
+  const pl = expaPlantillas(ev); const items = [];
+  pl.forEach(p=>{
+    if(p==="base_formal") EXPA_ITEMS.base.items.filter(i=>["b8","b9","b11","b12"].includes(i.k)).forEach(i=>items.push({...i, grupo:"Formalidades (NOM-004)"}));
+    else EXPA_ITEMS[p].items.forEach(i=>items.push({...i, grupo:EXPA_ITEMS[p].label}));
+  });
+  return items;
+}
+function expaResumen(items, exps){
+  return items.map(it=>{
+    const vals = exps.map(e=>(e.r||{})[it.k]).filter(v=>v==="si"||v==="no");
+    const no = vals.filter(v=>v==="no").length;
+    return {...it, evaluados: vals.length, fallan: no};
+  });
+}
+async function expaCargar(evId){
+  const ids = await ensureTipoIds();
+  const r = await cachedRead("ev:"+evId+":reg:auditoria_expedientes", ()=>sb.from("registros_unicos").select("*").eq("evaluacion_id", evId).eq("tipo_id", ids["r:auditoria_expedientes"]).maybeSingle());
+  return r.data || null;
+}
+async function expaGuardar(ev, reg, campos){
+  const ids = await ensureTipoIds();
+  if(reg && reg.id){ await persistEntity("registros_unicos", reg.id, "UPDATE", {campos}); }
+  else { const id = newId(); reg = {id, evaluacion_id:ev.id, tipo_id:ids["r:auditoria_expedientes"], campos}; await persistEntity("registros_unicos", id, "CREATE", {evaluacion_id:ev.id, tipo_id:reg.tipo_id, campos}); }
+  reg.campos = campos;
+  await patchCache("ev:"+ev.id+":reg:auditoria_expedientes", ()=>reg);
+  return reg;
+}
+async function renderExpAudit(){
+  const ev = state.currentEvaluacion; if(!ev){ go("dashboard"); return; }
+  const items = expaItems(ev);
+  let reg = await expaCargar(ev.id);
+  const campos = (reg && reg.campos) || {expedientes:[], hallazgosCreados:[]};
+  const exps = campos.expedientes = campos.expedientes || [];
+  const res = expaResumen(items, exps);
+  $app.innerHTML = `
+    <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+      <div style="flex:1"><p class="brand">AUDITORÍA DE EXPEDIENTES</p><h1 style="font-size:18px">${exps.length} expediente${exps.length===1?"":"s"} revisado${exps.length===1?"":"s"}</h1></div></div></div>
+    <div class="content">
+      ${!items.length ? `<div class="card"><b>Este establecimiento no lleva expediente clínico.</b><p class="muted small">Micropigmentación, tatuaje y perforación llevan registro del usuario (cuestionario, consentimiento y bitácora), que se revisa en sus criterios.</p></div>` : `
+      <p class="muted small" style="margin:0 0 10px">Revisa de 3 a 5 expedientes reales. Identifícalos solo con folio o iniciales; nunca escribas el nombre completo del paciente.</p>
+      <div id="expa-list"></div>
+      <button class="action-btn" id="expa-add"><span>+ Revisar un expediente</span><span>→</span></button>
+      ${exps.length ? `<div class="card"><div class="section-title">Resultado de la muestra</div>
+        ${res.filter(x=>x.evaluados).map(x=>`<div class="small-row" style="display:block"><div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(x.t)}${x.rec?" <span class='muted small'>(recomendado)</span>":""}</span><b style="color:${x.fallan? "#B3261E":"#2E7D4F"};white-space:nowrap">${x.fallan?`${x.fallan} de ${x.evaluados} fallan`:"Cumple"}</b></div><div class="muted small">${esc(x.grupo)} · ${esc(x.f)}</div></div>`).join("")}
+      </div>
+      <button class="action-btn" id="expa-hall" style="background:var(--navy-800)"><span>🚩 Crear hallazgos de lo que falla</span><span>→</span></button>
+      <p class="muted small" style="text-align:center;margin:8px 0 0">El resultado y la guía de llenado se incluyen en el PDF del diagnóstico.</p>` : ""}`}
+    </div>`;
+  document.getElementById("btn-back").onclick = () => go("resumen-evaluacion", {currentEvaluacion: ev});
+  if(!items.length) return;
+  const list = document.getElementById("expa-list");
+  exps.forEach((e,i)=>{
+    const ok = items.filter(it=>(e.r||{})[it.k]==="si").length, no = items.filter(it=>(e.r||{})[it.k]==="no").length;
+    const row = document.createElement("div"); row.className="hub-card";
+    row.innerHTML = `<div><div class="hc-name">${esc(e.ref||("Expediente "+(i+1)))}</div><div class="hc-sub">${ok} cumplen · ${no} fallan</div></div><div class="hc-arrow">→</div>`;
+    row.onclick = () => expaEditar(ev, items, campos, reg, i);
+    list.appendChild(row);
+  });
+  document.getElementById("expa-add").onclick = async () => {
+    const ref = await askText("Identificación del expediente", "Folio o iniciales (sin nombre completo)", "Ej. EXP-0341 o M.G.R.");
+    if(ref===null || ref===undefined) return;
+    exps.push({ref:(ref||"").trim() || ("Expediente "+(exps.length+1)), r:{}});
+    reg = await expaGuardar(ev, reg, campos);
+    expaEditar(ev, items, campos, reg, exps.length-1);
+  };
+  const bh = document.getElementById("expa-hall");
+  if(bh) bh.onclick = async () => {
+    const fallan = res.filter(x=>x.fallan && !(campos.hallazgosCreados||[]).includes(x.k));
+    if(!fallan.length){ showError("No hay fallas nuevas para convertir en hallazgos."); return; }
+    const clas = await getClasifSinClasificar();
+    for(const x of fallan){
+      await persistEntity("hallazgos", newId(), "CREATE", {evaluacion_id: ev.id, origen:"libre", clasificacion_id: clas, created_by: state.profile.id,
+        descripcion: `Expediente clínico: ${x.t}. Falla en ${x.fallan} de ${x.evaluados} expedientes revisados.`,
+        categoria: "Expediente clínico", fundamento: x.f, accion: `Corregir el formato y el llenado para que todo expediente cumpla: ${x.t.charAt(0).toLowerCase()+x.t.slice(1)}.`,
+        impacto: x.rec?2:3, probabilidad: x.fallan===x.evaluados?4:3, prioridad: computeManualPrioridad(x.rec?2:3, x.fallan===x.evaluados?4:3).toLowerCase(), estatus_accion:"pendiente"});
+      (campos.hallazgosCreados = campos.hallazgosCreados||[]).push(x.k);
+    }
+    reg = await expaGuardar(ev, reg, campos);
+    showError(`Se crearon ${fallan.length} hallazgo(s) en el área "Expediente clínico".`);
+    renderExpAudit();
+  };
+  const bp = document.getElementById("expa-pdf");
+  if(bp) bp.onclick = async () => { bp.disabled = true; try{ await generarPdfExpAudit(ev, items, exps); }catch(err){ showError("No se pudo generar el PDF: "+(err&&err.message?err.message:err)); } bp.disabled = false; };
+}
+function expaEditar(ev, items, campos, reg, idx){
+  const e = campos.expedientes[idx]; e.r = e.r || {};
+  const grupos = [...new Set(items.map(i=>i.grupo))];
+  const sheet = openModal(`
+    <h3 style="margin:0 0 4px">${esc(e.ref)}</h3>
+    <p class="muted small" style="margin:0 0 10px">Marca cada elemento: Sí, No o No aplica.</p>
+    <div id="expa-items">${grupos.map(g=>`<div class="section-title" style="margin-top:12px">${esc(g)}</div>` + items.filter(i=>i.grupo===g).map(i=>`
+      <div style="padding:8px 0;border-bottom:1px solid var(--line)"><div style="font-size:14px">${esc(i.t)}${i.rec?" <span class='muted small'>(recomendado)</span>":""}</div>
+      <div class="muted small">${esc(i.f)}</div>
+      <div class="chip-grid" style="margin-top:6px" data-k="${i.k}">${[["si","Sí"],["no","No"],["na","No aplica"]].map(([v,l])=>`<span class="chip ${e.r[i.k]===v?"selected":""}" data-v="${v}">${l}</span>`).join("")}</div></div>`).join("")).join("")}</div>
+    <button class="btn btn-primary" id="expa-ok" style="width:100%;margin-top:14px">Guardar</button>
+    <button class="btn btn-ghost" id="expa-del" style="width:100%;margin-top:8px;color:var(--bad)">Quitar este expediente de la muestra</button>`);
+  sheet.querySelectorAll("[data-k]").forEach(g=>g.querySelectorAll(".chip").forEach(ch=>ch.onclick=()=>{ e.r[g.dataset.k] = ch.dataset.v; g.querySelectorAll(".chip").forEach(x=>x.classList.toggle("selected", x===ch)); }));
+  sheet.querySelector("#expa-ok").onclick = async ()=>{ closeModal(); await expaGuardar(ev, reg, campos); renderExpAudit(); };
+  sheet.querySelector("#expa-del").onclick = async ()=>{ closeModal(); campos.expedientes.splice(idx,1); await expaGuardar(ev, reg, campos); renderExpAudit(); };
+}
+async function generarPdfExpAudit(ev, items, exps){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
+  const datosEst = await getDatosEst(ev.expediente_id);
+  const clinica = datosEst.nombreComercial || state.currentExpediente?.nombre_expediente || "Clínica";
+  const res = expaResumen(items, exps);
+  const c = finPdfBase(); const {doc} = c;
+  drawPortadaPdf(doc, {titulo:"Auditoría de expedientes clínicos", subtitulo:"Resultado de la muestra y guía de llenado", cliente:clinica, detalle:`Visita: ${ev.fecha_visita||"—"} · ${exps.length} expediente(s) revisado(s)`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
+  c.header("Auditoría de expedientes clínicos", clinica);
+  c.body(`Se revisó una muestra de ${exps.length} expediente(s), identificados solo por folio o iniciales. Para cada elemento se indica en cuántos expedientes falla. La sección final es la guía de llenado que debe seguir todo expediente de este establecimiento.`, {size:10.5, lh:15}); c.y+=6;
+  const fallan = res.filter(x=>x.fallan);
+  c.heading(`Lo que falla (${fallan.length})`);
+  if(fallan.length) fallan.sort((a,b)=>b.fallan/b.evaluados - a.fallan/a.evaluados).forEach(x=>c.row(x.t, `${x.fallan} de ${x.evaluados}`, x.fallan===x.evaluados));
+  else c.body("En la muestra revisada no se encontraron fallas.", {size:10.5});
+  c.heading("Detalle por expediente");
+  exps.forEach(e=>{ const no = items.filter(it=>(e.r||{})[it.k]==="no"); c.body(`${e.ref}: ${no.length ? no.length+" elemento(s) faltante(s)" : "sin fallas"}`, {bold:true, size:10.5}); no.forEach(it=>c.body("•  "+it.t, {size:9.5, indent:10, lh:12})); c.y+=3; });
+  c.heading("Guía de llenado");
+  [...new Set(items.map(i=>i.grupo))].forEach(g=>{
+    c.body(g, {bold:true, size:11, color:c.NAVY});
+    items.filter(i=>i.grupo===g).forEach(i=>{ c.body(`[  ]  ${i.t}${i.rec?" (recomendado)":""}`, {size:10, indent:6, lh:13}); c.body(i.f, {size:8.5, indent:22, color:c.SOFT, lh:11}); });
+    c.y+=4;
+  });
+  c.body("Conservación: todo expediente debe guardarse al menos 5 años desde el último acto médico (NOM-004, 5.4).", {size:9.5, color:c.SOFT, lh:12});
+  c.y+=6; c.body("Auditoría preventiva sobre una muestra; no sustituye una verificación de la autoridad. Los datos de pacientes no se registran en la plataforma.", {size:8.5, color:c.SOFT, lh:11});
+  await c.save(`AUDITORIA-EXPEDIENTES-${carpetaSlug(clinica,4)}-${ev.fecha_visita||""}.pdf`);
 }
 
 /* ------------------------------- Init ------------------------------- */
