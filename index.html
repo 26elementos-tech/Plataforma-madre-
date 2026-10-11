@@ -3133,7 +3133,7 @@ async function renderResumenEvaluacion(){
   const nRegHall = activos.filter(cr => respuestas[cr.id] && ["no_cumple","parcial","pendiente","no_verificado"].includes(respuestas[cr.id].estatus)).length;
   const nHall = nRegHall + (libresRes.data||[]).length;
   hubRow("🚩", "Hallazgos", `${nHall} hallazgo${nHall===1?"":"s"}`, () => document.getElementById("hallazgos-anchor")?.scrollIntoView({behavior:"smooth", block:"start"}), nHall>0);
-  if(dep.codigo==="cofepris"){
+  if(dep.codigo==="cofepris" && ev.nivel_checkup!=="basico"){
     const nExp = await expaCargar(ev.id).then(r=>((r&&r.campos&&r.campos.expedientes)||[]).length).catch(()=>0);
     hubRow("📁", "Auditoría de expedientes", nExp ? `${nExp} revisado${nExp===1?"":"s"}` : "Revisa una muestra de 3 a 5 expedientes", () => go("exp-audit", {currentEvaluacion: ev}));
   }
@@ -4092,7 +4092,7 @@ async function generarPdfDiagnostico(cache, mode){
   try{
     const regExp = await expaCargar(ev.id);
     const expsA = (regExp && regExp.campos && regExp.campos.expedientes) || [];
-    if(expsA.length){
+    if(expsA.length && ev.nivel_checkup!=="basico"){
       const evFacts = ev.facts ? ev : (await sb.from("evaluaciones").select("facts").eq("id", ev.id).single()).data || ev;
       const itemsA = expaItems({facts: evFacts.facts || {}});
       const resA = expaResumen(itemsA, expsA);
@@ -4119,6 +4119,23 @@ async function generarPdfDiagnostico(cache, mode){
         y += 3;
       });
       body("Conservar cada expediente al menos 5 años desde el último acto médico (NOM-004, 5.4).", {size:9, color:SOFT, lh:12});
+      if(fallanA.length){
+        const pls = expaPlantillas({facts: evFacts.facts || {}});
+        const NOMBRES = {base:"medicina general y de especialidad", estetica:"medicina estética", dental:"odontología", quirurgico:"cirugía y procedimientos con anestesia"};
+        const esp = pls.filter(x=>NOMBRES[x]).map(x=>NOMBRES[x]);
+        const CONT = {base:"historia clínica y nota de evolución conforme a la NOM-004", estetica:"consentimientos por procedimiento estético, bitácora de multidosis y autorización de uso de fotografías", dental:"historia clínica estomatológica con odontograma y periodontograma, y consentimientos conforme a la NOM-013", quirurgico:"notas pre y postoperatorias, valoración y registro anestésico, y consentimientos de cirugía y anestesia"};
+        const contenido = pls.filter(x=>CONT[x]).map(x=>CONT[x]).join("; ");
+        const txt = `Paquete de formatos de expediente clínico de Elementos Financieros para ${esp.join(", ")}: ${contenido}. Incluye versión física lista para imprimir y versión digital para llenar e imprimir, personalizadas con los datos de la clínica, y cada formato indica la norma que cumple. Con implementación opcional: capacitación del equipo en el llenado.`;
+        const tl = doc.setFont("helvetica","normal").setFontSize(10).splitTextToSize(txt, maxW-28);
+        const nota = doc.setFontSize(8.5).splitTextToSize("La versión digital no sustituye un expediente clínico electrónico: para operar sin papel se requiere un sistema con certificado SIRES.", maxW-28);
+        const h = 30 + tl.length*13 + nota.length*11 + 8;
+        checkBreak(h + 10); y += 8;
+        doc.setFillColor(241,231,210); doc.roundedRect(margin, y, maxW, h, 6, 6, "F");
+        doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.setTextColor(...NAVY); doc.text("Siguiente paso recomendado", margin+14, y+20);
+        doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(...INK); tl.forEach((l,k)=>doc.text(l, margin+14, y+36+k*13));
+        doc.setFontSize(8.5); doc.setTextColor(...SOFT); nota.forEach((l,k)=>doc.text(l, margin+14, y+36+tl.length*13+4+k*11));
+        y += h + 10;
+      }
       y += 4; rule();
     }
   }catch(audErr){ console.warn("No se pudo agregar la auditoría de expedientes al PDF:", audErr); }
@@ -6036,7 +6053,7 @@ async function expaGuardar(ev, reg, campos){
 }
 async function renderExpAudit(){
   const ev = state.currentEvaluacion; if(!ev){ go("dashboard"); return; }
-  const items = expaItems(ev);
+  const items = ev.nivel_checkup==="basico" ? [] : expaItems(ev);
   let reg = await expaCargar(ev.id);
   const campos = (reg && reg.campos) || {expedientes:[], hallazgosCreados:[]};
   const exps = campos.expedientes = campos.expedientes || [];
