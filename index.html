@@ -266,6 +266,31 @@ const NIVELES = [
    igual que en V3. tipos_coleccion/tipos_registro_unico ya existen como catálogo en
    Supabase (por codigo) -- aquí solo se resuelven sus IDs, los campos que se muestran
    se definen aquí para no depender de esquema_campos (que quedó vacío en el seed). */
+/* Aparatología: ¿requiere registro sanitario? Basado en el art. 83 del Reglamento de Insumos para la Salud y el
+   Acuerdo de listados de dispositivos médicos de bajo riesgo (DOF 07-07-2025): req = requiere registro;
+   no = exento (Anexo DOS); ver = verificar. Ante duda, nunca "no requiere". */
+const APARATO_CAT = [
+  ["Láser (depilación, dermatológico o quirúrgico)","req"], ["IPL / luz pulsada intensa","req"], ["Radiofrecuencia","req"],
+  ["HIFU / ultrasonido focalizado","req"], ["Criolipólisis","req"], ["Cavitación / ultrasonido estético","req"],
+  ["Electroestimulación / electroporación","req"], ["Microneedling eléctrico (dermapen)","req"], ["Electrocauterio / electrobisturí","req"],
+  ["Autoclave / esterilizador","req"], ["Unidad dental / lámpara de fotocurado","req"], ["Equipo de rayos X dental","req"],
+  ["Hidrafacial / microdermoabrasión con equipo","ver"], ["Baumanómetro digital","ver"], ["Vaporizador facial / lámpara lupa","ver"],
+  ["Báscula con estadímetro","no"], ["Lámpara de exploración","no"], ["Brazalete de presión (solo el brazalete)","no"],
+  ["Camilla o mesa de exploración","no"], ["Limpiador ultrasónico de instrumental","no"], ["Otro","ver"],
+];
+const APARATO_TXT = {req:"Requiere registro sanitario", no:"No requiere registro (exento)", ver:"Verificar si requiere registro"};
+function aparatoEstatus(tipo){ const x = APARATO_CAT.find(a=>a[0]===tipo); return x ? x[1] : null; }
+async function ofrecerHallazgoEquipo(evaluacionId, campos, parentId){
+  const st = aparatoEstatus(campos.tipoEquipo);
+  if(st!=="req" || (campos.registroSanitario||"").trim()) return false;
+  const c = await askChoice(`${campos.equipo||campos.tipoEquipo} requiere registro sanitario y no se capturó el número. ¿Crear hallazgo?`, [{v:1,label:"Sí, crear hallazgo"},{v:0,label:"Ahora no"}], o=>o.label);
+  if(!c || !c.v) return false;
+  await flagComoHallazgo(evaluacionId, "equipo", campos.equipo || campos.tipoEquipo,
+    `${campos.equipo || campos.tipoEquipo}${campos.marca?" ("+campos.marca+(campos.modelo?" "+campos.modelo:"")+")":""} no cuenta con registro sanitario comprobable.`,
+    "coleccion_item_id", parentId,
+    {categoria:"Equipamiento y dispositivos médicos", accion:"Solicitar al proveedor el número y la copia del registro sanitario del equipo; si no lo tiene, suspender su uso hasta regularizarlo."});
+  return true;
+}
 const COLLECTION_SCHEMAS = {
   personal: {label:"Personal", icon:"🧑‍⚕️", singular:"persona", titleField:"nombre", fields:[
     {key:"nombre",label:"Nombre",type:"text"},{key:"puesto",label:"Puesto",type:"text"},
@@ -277,7 +302,9 @@ const COLLECTION_SCHEMAS = {
     {key:"area",label:"Área",type:"text"},{key:"estado",label:"Estado físico",type:"text"},
   ]},
   equipo: {label:"Equipamiento", icon:"🩺", singular:"equipo", titleField:"equipo", fields:[
-    {key:"equipo",label:"Equipo",type:"text"},{key:"marca",label:"Marca",type:"text"},{key:"modelo",label:"Modelo",type:"text"},
+    {key:"equipo",label:"Equipo",type:"text"},{key:"tipoEquipo",label:"Tipo de equipo",type:"select",options:APARATO_CAT.map(x=>x[0])},
+    {key:"registroSanitario",label:"Número de registro sanitario (etiqueta o manual)",type:"text"},
+    {key:"marca",label:"Marca",type:"text"},{key:"modelo",label:"Modelo",type:"text"},
     {key:"numeroSerie",label:"Número de serie",type:"text"},{key:"area",label:"Área",type:"text"},
     {key:"mantenimiento",label:"Mantenimiento",type:"text"},{key:"documentacion",label:"Documentación",type:"textarea"},
   ]},
@@ -591,6 +618,10 @@ function camposPorNivel(fields){
   return (fields||[]).filter(f=>!f.niveles || !nivel || f.niveles.includes(nivel));
 }
 function openItemForm(evaluacionId, schema, existing){
+  setTimeout(()=>{ const sel = document.querySelector('.modal [data-f="tipoEquipo"], [data-f="tipoEquipo"]'); if(!sel) return;
+    let h = document.getElementById("equipo-hint"); if(!h){ h = document.createElement("div"); h.id = "equipo-hint"; h.className = "small"; h.style.margin = "4px 0 8px"; sel.insertAdjacentElement("afterend", h); }
+    const pinta = () => { const st = aparatoEstatus(sel.value); h.innerHTML = st ? `<b style="color:${st==="req"?"#B3261E":st==="no"?"#2E7D4F":"#B8860B"}">${APARATO_TXT[st]}</b>` : ""; };
+    sel.addEventListener("change", pinta); pinta(); }, 50);
   return new Promise((resolve)=>{
     const fieldsHtml = camposPorNivel(schema.fields).map(f=>{
       const val = (existing && existing.campos && existing.campos[f.key]) || "";
@@ -713,6 +744,7 @@ async function openColeccionList(evaluacionId, codigo){
         await persistEntity("colecciones_items", item.id, "UPDATE", {campos:res.campos, observaciones:res.observaciones});
         await patchCache("ev:"+evaluacionId+":coll:"+codigo, (list)=>(list||[]).map(x=>x.id===item.id?{...x,campos:res.campos,observaciones:res.observaciones}:x));
         if(codigo==="publicidad_captura" && await ofrecerHallazgoRedes(evaluacionId, codigo, res.campos, "Publicación en "+(res.campos.canal||"redes"), "coleccion_item_id", item.id)) return;
+        if(codigo==="equipo" && await ofrecerHallazgoEquipo(evaluacionId, res.campos, item.id)) return;
       } else if(res && res.action==="delete"){
         await persistEntity("colecciones_items", item.id, "DELETE", {});
         await patchCache("ev:"+evaluacionId+":coll:"+codigo, (list)=>(list||[]).filter(x=>x.id!==item.id));
@@ -740,6 +772,7 @@ async function openColeccionList(evaluacionId, codigo){
       await patchCache("ev:"+evaluacionId+":coll:"+codigo, (list)=>[...(list||[]), {id:newItemId, evaluacion_id:evaluacionId, tipo_id:tipoId, campos:res.campos, observaciones:res.observaciones, created_at:new Date().toISOString()}]);
       await patchCache("ev:"+evaluacionId+":coll_counts", (rows)=>[...(rows||[]), {tipo_id:tipoId}]);
       if(codigo==="publicidad_captura" && await ofrecerHallazgoRedes(evaluacionId, codigo, res.campos, "Publicación en "+(res.campos.canal||"redes"), "coleccion_item_id", newItemId)) return;
+      if(codigo==="equipo" && await ofrecerHallazgoEquipo(evaluacionId, res.campos, newItemId)) return;
     }
     openColeccionList(evaluacionId, codigo);
   };
