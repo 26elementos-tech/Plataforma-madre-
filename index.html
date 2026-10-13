@@ -1596,7 +1596,7 @@ function renderLogin(){
         <label>Contraseña</label>
         <input type="password" id="f-password" placeholder="••••••••" autocomplete="${isSignup?'new-password':'current-password'}">
         <button class="btn btn-primary" id="btn-submit" style="margin-top:18px">${isSignup ? "Crear cuenta" : "Entrar"}</button>
-        <button class="btn-link" id="btn-toggle">${isSignup ? "Ya tengo cuenta — iniciar sesión" : "No tengo cuenta — crear una"}</button>
+        ${isSignup ? `<button class="btn-link" id="btn-toggle">Ya tengo cuenta — iniciar sesión</button>` : `<span id="btn-toggle" style="display:none"></span><p class="muted small" style="margin-top:12px">Acceso solo por invitación de Elementos Financieros.</p>`}
       </div>
       <div class="empty-note">Los datos de esta plataforma viven en Supabase — nada se guarda solo en este dispositivo.</div>
     </div>
