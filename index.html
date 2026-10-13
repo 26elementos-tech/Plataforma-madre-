@@ -4046,10 +4046,24 @@ async function generarPdfDiagnostico(cache, mode){
   // Cada hallazgo es su propia tarjeta numerada -- ya trae qué hacer, foto, responsable,
   // fecha y estatus juntos, para que se corrija punto por punto (nada de una lista plana
   // de texto corrido separada al final, que era justo el problema del diseño anterior).
-  heading(`Puntos por corregir (${diag.findings.length})`, 13);
-  if(diag.findings.length===0) body("No se identificaron hallazgos con lo contestado.");
-  for(let i=0;i<diag.findings.length;i++){
-    const f = diag.findings[i];
+  // Los hallazgos de la auditoría de expedientes se muestran como UN solo punto; el detalle va en su sección.
+  const esAud = f => f.origen==="libre" && /^Expediente clínico:/.test((f.hallazgo&&f.hallazgo.descripcion) || f.criterio.requisito || "") && /(expedientes revisados|auditoría de expedientes)/.test((f.hallazgo&&f.hallazgo.descripcion) || f.criterio.requisito || "");
+  const audF = diag.findings.filter(esAud);
+  const ORD_P = {CRITICA:0, ALTA:1, MEDIA:2, BAJA:3, POR_DETERMINAR:4};
+  let findingsPDF = diag.findings.filter(f=>!esAud(f));
+  if(audF.length){
+    const peor = audF.slice().sort((x,z)=>(ORD_P[x.risk.prioridad]??9)-(ORD_P[z.risk.prioridad]??9))[0];
+    const nEl = audF.length===1 && /auditoría de expedientes/.test(audF[0].hallazgo?.descripcion||"") ? (audF[0].hallazgo.descripcion.match(/(\d+) elemento/)||[])[1] || "Varios" : audF.length;
+    const sint = {...peor, criterio:{...peor.criterio, modulo:"Expediente clínico", requisito:`Expediente clínico: ${nEl} elemento(s) fallan en la auditoría de expedientes`},
+      hallazgo:{...(peor.hallazgo||{}), accion:"Corregir los formatos y el llenado de los expedientes. El detalle de cada elemento, su fundamento y la guía de llenado están en la sección Auditoría de expedientes clínicos."}, evidencias:[]};
+    const idx = diag.findings.indexOf(peor);
+    const antes = diag.findings.slice(0, idx).filter(f=>!esAud(f)).length;
+    findingsPDF.splice(antes, 0, sint);
+  }
+  heading(`Puntos por corregir (${findingsPDF.length})`, 13);
+  if(findingsPDF.length===0) body("No se identificaron hallazgos con lo contestado.");
+  for(let i=0;i<findingsPDF.length;i++){
+    const f = findingsPDF[i];
     const h = f.hallazgo || {};
     const estatusActual = h.estatus_accion || "pendiente";
     const doneF = estatusActual==="corregido" || estatusActual==="verificado";
@@ -4248,6 +4262,40 @@ async function generarPdfDiagnostico(cache, mode){
       y += 4; rule();
     }
   }catch(invErr){ console.warn("No se pudo agregar el levantamiento de sitio al PDF:", invErr); }
+
+  // ---------- Análisis de la situación, en lenguaje claro para el médico ----------
+  try{
+    const pend = findingsPDF.filter(f=>!["corregido","verificado"].includes((f.hallazgo&&f.hallazgo.estatus_accion)||""));
+    const cuenta = k => pend.filter(f=>f.risk.prioridad===k).length;
+    const nC = cuenta("CRITICA"), nA = cuenta("ALTA"), nM = cuenta("MEDIA") + cuenta("BAJA");
+    const corr = findingsPDF.length - pend.length;
+    const areasTop = (diag.areaRows||[]).slice().sort((x,z)=>z.percent-x.percent).filter(x=>x.percent>=40).slice(0,3);
+    const sinRiesgo = (diag.areaRows||[]).filter(x=>x.percent<20).map(x=>x.modulo);
+    checkBreak(120);
+    heading("Análisis de la situación", 13);
+    if(!findingsPDF.length){
+      body(`Con lo revisado en la visita, su establecimiento no presenta puntos por corregir. Su índice de riesgo es ${diag.percent===null?"—":diag.percent+"%"}. Mantener la documentación vigente y las bitácoras al día es lo que sostiene este resultado en una verificación.`, {size:10.5, lh:15});
+    } else {
+      body(`Con lo revisado en la visita, su clínica tiene un índice de riesgo regulatorio de ${diag.percent===null?"—":diag.percent+"%"} (riesgo ${String(diag.band.label).toLowerCase()}). Tiene ${pend.length} punto(s) pendientes por corregir: ${nC} crítico(s), ${nA} de prioridad alta y ${nM} de prioridad media o baja${corr?`, y ya corrigió ${corr}`:""}.`, {size:10.5, lh:15});
+      y += 4;
+      if(areasTop.length) body(`El riesgo se concentra en ${areasTop.map(x=>`${x.modulo} (${x.percent}%)`).join(", ").replace(/, ([^,]*)$/, " y $1")}. ${sinRiesgo.length?`En cambio, ${sinRiesgo.slice(0,3).join(", ").replace(/, ([^,]*)$/, " y $1")} ${sinRiesgo.length===1?"está":"están"} en orden.`:""}`, {size:10.5, lh:15});
+      y += 4;
+      const urg = pend.filter(f=>f.risk.prioridad==="CRITICA").slice(0,3);
+      if(urg.length){
+        body("Lo más urgente:", {bold:true, size:10.5, lh:15});
+        urg.forEach(f=> body(`•  ${f.criterio.requisito}`, {size:10.5, lh:14, indent:8}));
+        y += 4;
+      }
+      body("Qué significa: en una visita de verificación, los puntos críticos son los que más exponen a la clínica a una sanción, como una multa o la suspensión de actividades. Los de prioridad alta y media suelen quedar como observaciones que deben corregirse en un plazo.", {size:10.5, lh:15});
+      y += 4;
+      body("Ruta sugerida:", {bold:true, size:10.5, lh:15});
+      if(nC) body(`•  Primeros 30 días: los ${nC} punto(s) crítico(s).`, {size:10.5, lh:14, indent:8});
+      if(nA) body(`•  Días 31 a 60: los ${nA} punto(s) de prioridad alta.`, {size:10.5, lh:14, indent:8});
+      if(nM) body(`•  Días 61 a 90: los ${nM} punto(s) restantes.`, {size:10.5, lh:14, indent:8});
+      body("•  Al terminar, una visita de seguimiento verifica cada corrección y actualiza este índice.", {size:10.5, lh:14, indent:8});
+    }
+    y += 6; rule();
+  }catch(anErr){ console.warn("No se pudo generar el análisis:", anErr); }
 
   heading("Conclusión", 13);
   body(`El presente documento constituye un diagnóstico de revisión realizado con base en la información, documentación y evidencia recabada durante la visita del ${ev.fecha_visita||"(fecha no registrada)"}. No sustituye una visita de verificación ni una resolución emitida por la autoridad sanitaria.`);
@@ -6102,7 +6150,7 @@ async function renderExpAudit(){
       ${exps.length ? `<div class="card"><div class="section-title">Resultado de la muestra</div>
         ${res.filter(x=>x.evaluados).map(x=>`<div class="small-row" style="display:block"><div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(x.t)}${x.rec?" <span class='muted small'>(recomendado)</span>":""}</span><b style="color:${x.fallan? "#B3261E":"#2E7D4F"};white-space:nowrap">${x.fallan?`${x.fallan} de ${x.evaluados} fallan`:"Cumple"}</b></div><div class="muted small">${esc(x.grupo)} · ${esc(x.f)}</div></div>`).join("")}
       </div>
-      <button class="action-btn" id="expa-hall" style="background:var(--navy-800)"><span>🚩 Crear hallazgos de lo que falla</span><span>→</span></button>
+      <button class="action-btn" id="expa-hall" style="background:var(--navy-800)"><span>🚩 Crear (o actualizar) el hallazgo de expedientes</span><span>→</span></button>
       <p class="muted small" style="text-align:center;margin:8px 0 0">El resultado y la guía de llenado se incluyen en el PDF del diagnóstico.</p>` : ""}`}
     </div>`;
   document.getElementById("btn-back").onclick = () => go("resumen-evaluacion", {currentEvaluacion: ev});
@@ -6124,18 +6172,23 @@ async function renderExpAudit(){
   };
   const bh = document.getElementById("expa-hall");
   if(bh) bh.onclick = async () => {
-    const fallan = res.filter(x=>x.fallan && !(campos.hallazgosCreados||[]).includes(x.k));
-    if(!fallan.length){ showError("No hay fallas nuevas para convertir en hallazgos."); return; }
-    const clas = await getClasifSinClasificar();
-    for(const x of fallan){
-      await persistEntity("hallazgos", newId(), "CREATE", {evaluacion_id: ev.id, origen:"libre", clasificacion_id: clas, created_by: state.profile.id,
-        descripcion: `Expediente clínico: ${x.t}. Falla en ${x.fallan} de ${x.evaluados} expedientes revisados.`,
-        categoria: "Expediente clínico", fundamento: x.f, accion: `Corregir el formato y el llenado para que todo expediente cumpla: ${x.t.charAt(0).toLowerCase()+x.t.slice(1)}.`,
-        impacto: x.rec?2:3, probabilidad: x.fallan===x.evaluados?4:3, prioridad: computeManualPrioridad(x.rec?2:3, x.fallan===x.evaluados?4:3).toLowerCase(), estatus_accion:"pendiente"});
-      (campos.hallazgosCreados = campos.hallazgosCreados||[]).push(x.k);
+    const fallan = res.filter(x=>x.fallan);
+    if(!fallan.length){ showError("No hay fallas para convertir en hallazgo."); return; }
+    const obligatorias = fallan.filter(x=>!x.rec);
+    const impacto = obligatorias.length ? 3 : 2, prob = fallan.some(x=>x.fallan===x.evaluados) ? 4 : 3;
+    const campos_h = {descripcion: `Expediente clínico: ${fallan.length} elemento(s) fallan en la auditoría de expedientes (muestra de ${exps.length}).`,
+      categoria: "Expediente clínico", fundamento: "NOM-004-SSA3-2012 y normas por especialidad",
+      accion: "Corregir los formatos y el llenado de los expedientes según la guía de llenado del diagnóstico.",
+      impacto, probabilidad: prob, prioridad: computeManualPrioridad(impacto, prob).toLowerCase()};
+    if(campos.hallazgoConsolidadoId){
+      await persistEntity("hallazgos", campos.hallazgoConsolidadoId, "UPDATE", campos_h);
+    } else {
+      const hid = newId();
+      await persistEntity("hallazgos", hid, "CREATE", {...campos_h, evaluacion_id: ev.id, origen:"libre", clasificacion_id: await getClasifSinClasificar(), created_by: state.profile.id, estatus_accion:"pendiente"});
+      campos.hallazgoConsolidadoId = hid;
     }
     reg = await expaGuardar(ev, reg, campos);
-    showError(`Se crearon ${fallan.length} hallazgo(s) en el área "Expediente clínico".`);
+    showError(`Listo: un solo hallazgo de "Expediente clínico" con ${fallan.length} elemento(s). El detalle va en la sección de auditoría del diagnóstico.`);
     renderExpAudit();
   };
   const bp = document.getElementById("expa-pdf");
