@@ -200,6 +200,7 @@ if(!window.supabase){
   document.getElementById("app").innerHTML = `<div class="content"><div class="err">No se pudo cargar la librería de Supabase (requiere conexión a internet). Verifica tu conexión e intenta de nuevo.</div></div>`;
   throw new Error("supabase-js no cargó");
 }
+const AUTH_HASH_TYPE = (location.hash.match(/type=(invite|recovery)/)||[])[1] || null;
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* ------------------------------- Estado ------------------------------- */
@@ -1524,7 +1525,7 @@ sb.auth.onAuthStateChange(async (event, session) => {
     state.profile = await ensureProfile(session);
     if(state.screen === "loading" || state.screen === "login"){
       go(state.profile ? "dashboard" : "login");
-      if(state.profile) offerResume();
+      if(state.profile){ offerResume(); quizasCrearContrasena(); }
     } else {
       render();
     }
@@ -1543,7 +1544,7 @@ async function initSession(){
     state.session = data.session;
     state.profile = await ensureProfile(data.session);
     go(state.profile ? "dashboard" : "login");
-    if(state.profile) offerResume();
+    if(state.profile){ offerResume(); quizasCrearContrasena(); }
   } else {
     go("login");
   }
@@ -1567,6 +1568,7 @@ async function render(){
   if(state.screen==="fis-wizard") return renderFisWizard();
   if(state.screen==="leg-wizard") return renderLegWizard();
   if(state.screen==="exp-audit") return renderExpAudit();
+  if(state.screen==="equipo") return renderEquipo();
   if(state.screen==="leg-resultado") return renderLegResultado();
   if(state.screen==="fis-resultado") return renderFisResultado();
   if(state.screen==="fin-resultado") return renderFinResultado();
@@ -1677,7 +1679,9 @@ async function renderDashboard(){
   const base = DASH_VER_ARCHIVADOS ? archivados : activos;
 
   c.innerHTML = `
-    ${DASH_VER_ARCHIVADOS ? "" : `<button class="action-btn" id="btn-new-exp"><span>+ Nuevo expediente</span><span>→</span></button>`}
+    ${(DASH_VER_ARCHIVADOS || !esAdmin()) ? "" : `<button class="action-btn" id="btn-new-exp"><span>+ Nuevo expediente</span><span>→</span></button>`}
+    ${esAdmin() && !DASH_VER_ARCHIVADOS ? `<button class="btn btn-ghost" id="btn-equipo" style="margin-bottom:12px">👥 Mi equipo</button>` : ""}
+    <div id="dash-revisar"></div>
     ${base.length > 3 ? `<input type="search" id="dash-search" placeholder="Buscar expediente…" value="${esc(DASH_BUSQUEDA)}" style="margin:4px 0 12px">` : ""}
     <div id="exp-list"></div>
     <button class="btn-link" id="btn-toggle-arch" style="display:block;margin:18px auto 0">
@@ -1687,6 +1691,9 @@ async function renderDashboard(){
   const bNew = document.getElementById("btn-new-exp");
   if(bNew) bNew.onclick = showNewExpedienteForm;
   document.getElementById("btn-toggle-arch").onclick = () => { DASH_VER_ARCHIVADOS = !DASH_VER_ARCHIVADOS; DASH_BUSQUEDA = ""; renderDashboard(); };
+  if(!esAdmin()) document.getElementById("btn-toggle-arch").style.display = "none";
+  const bEq = document.getElementById("btn-equipo"); if(bEq) bEq.onclick = () => go("equipo");
+  if(esAdmin() && !DASH_VER_ARCHIVADOS) renderPorRevisar(document.getElementById("dash-revisar")).catch(()=>{});
 
   const list = document.getElementById("exp-list");
   const pintar = () => {
@@ -1708,7 +1715,8 @@ async function renderDashboard(){
         <div class="hc-arrow">→</div>
       `;
       div.onclick = () => go("expediente", {currentExpediente: e});
-      div.querySelector("[data-exp-menu]").addEventListener("click", (ev)=>{ ev.stopPropagation(); openExpedienteMenu(e); });
+      if(esAdmin()) div.querySelector("[data-exp-menu]").addEventListener("click", (ev)=>{ ev.stopPropagation(); openExpedienteMenu(e); });
+      else div.querySelector("[data-exp-menu]").style.display = "none";
       list.appendChild(div);
     });
   };
@@ -1971,7 +1979,7 @@ async function renderExpediente(){
   c.innerHTML = `
     ${fromCache ? `<div class="empty-note" style="margin-bottom:14px">📴 Mostrando datos guardados en este dispositivo (sin conexión) — puede no reflejar cambios hechos desde otro lugar.</div>` : ""}
     ${datosEstCompletos(dEst)
-      ? `<div class="card" id="est-card" style="cursor:pointer;padding:12px 14px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div style="min-width:0"><div class="area-name" style="font-size:15px">${esc(dEst.nombreComercial)}</div><div class="area-sub">${esc([dEst.municipio, dEst.estado].filter(Boolean).join(", "))}${dEst.responsableSanitario?" · Resp. "+esc(dEst.responsableSanitario):""}</div></div><span class="muted small">Editar ›</span></div></div>`
+      ? `<div class="card" id="est-card" style="cursor:pointer;padding:12px 14px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div style="min-width:0"><div class="area-name" style="font-size:15px">${esc(dEst.nombreComercial)}</div><div class="area-sub">${esc([dEst.municipio, dEst.estado].filter(Boolean).join(", "))}${dEst.responsableSanitario?" · Resp. "+esc(dEst.responsableSanitario):""}</div></div>${esAdmin()?`<span class="muted small">Editar ›</span>`:""}</div></div>`
       : `<div class="card" id="est-card" style="cursor:pointer;border-color:var(--gold-500);background:var(--gold-100)"><b>⚠️ Completa los datos del establecimiento</b><div class="muted small" style="margin-top:4px">Domicilio, estado, responsable sanitario… Se usan en todos los check-ups y en el PDF.</div></div>`}
     <div class="exp-tabs">${tabBtn("regulatorio","Regulatorio")}${tabBtn("clinica","Clínica")}${tabBtn("patrimonio","Patrimonio")}</div>
     <div id="exp-tab-body"></div>
@@ -1987,8 +1995,16 @@ async function renderExpediente(){
       </label>
     </div>
   `;
-  document.getElementById("est-card").onclick = () => go("exp-datos", {currentExpediente: exp});
+  document.getElementById("est-card").onclick = () => { if(esAdmin()) go("exp-datos", {currentExpediente: exp}); };
   c.querySelectorAll(".exp-tab").forEach(b=> b.onclick = () => { EXP_TAB = b.dataset.tab; renderExpediente(); });
+  if(!esAdmin()){
+    EXP_TAB = "regulatorio";
+    c.querySelector(".exp-tabs").style.display = "none";
+    const cs = document.getElementById("servicios-list"); if(cs) cs.closest(".card").style.display = "none";
+    state.misAreas = await misAreasEnExpediente(exp.id).catch(()=>new Set());
+  } else {
+    const slot = document.createElement("div"); c.appendChild(slot); renderEquipoAsignado(slot, exp).catch(()=>{});
+  }
 
   // Avance de visitas de seguimiento (cuántas correcciones ya están verificadas)
   const segIds = evals.filter(e=>e.tipo_visita==="seguimiento").map(e=>e.id);
@@ -2431,7 +2447,7 @@ async function generarIndiceCarpetaDep(ev){
 }
 
 function renderTabRegulatorio(body, exp, porArea, avance){
-  const areas = REG_AREAS.slice();
+  const areas = esAdmin() ? REG_AREAS.slice() : REG_AREAS.filter(a=>state.misAreas && state.misAreas.has(a.codigo));
   if(porArea.otras.length) areas.push({codigo:"otras", nombre:"Sin clasificar", icon:"📁", sub:"Evaluaciones aún sin área (se acomodan al sincronizar)"});
   body.innerHTML = `<p class="muted small" style="margin:2px 0 12px">Cumplimiento ante autoridades. Cada dependencia lleva sus propias evaluaciones.</p>`;
   areas.forEach(ar=>{
@@ -3170,7 +3186,8 @@ async function renderResumenEvaluacion(){
     const nExp = await expaCargar(ev.id).then(r=>((r&&r.campos&&r.campos.expedientes)||[]).length).catch(()=>0);
     hubRow("📁", "Auditoría de expedientes", nExp ? `${nExp} revisado${nExp===1?"":"s"}` : "Revisa una muestra de 3 a 5 expedientes", () => go("exp-audit", {currentEvaluacion: ev}));
   }
-  hubRow("🧾", "Diagnóstico / PDF", contestados ? "Ver diagnóstico y generar PDF" : "Generar cuando termines el levantamiento", () => go("diagnostico-evaluacion", {currentEvaluacion: ev}));
+  if(!esAdmin()) hubRow("🧾", "Diagnóstico", ev.revision_estado==="por_revisar" ? "Enviada a revisión" : "Revisa y envía a revisión", () => go("diagnostico-evaluacion", {currentEvaluacion: ev}));
+  else hubRow("🧾", "Diagnóstico / PDF", contestados ? "Ver diagnóstico y generar PDF" : "Generar cuando termines el levantamiento", () => go("diagnostico-evaluacion", {currentEvaluacion: ev}));
   const groupsEl = document.getElementById("crit-groups");
   if(activos.length===0){
     groupsEl.innerHTML = `<div class="empty-note">Ningún criterio de los 6 módulos validados aplica con estos datos.</div>`;
@@ -3370,6 +3387,26 @@ async function renderDiagnosticoEvaluacion(){
     ${ev.estatus!=="completado" ? `<button class="btn btn-ghost" id="btn-cerrar-eval" style="margin-bottom:20px">Cerrar evaluación</button>`
       : `<div class="empty-note" style="margin-bottom:20px">✅ Evaluación cerrada</div>`}
   `;
+  {
+    const diagC = document.getElementById("btn-pdf").parentElement;
+    if(!esAdmin()){
+      ["btn-pdf","btn-carpetas","btn-proto-mkt","btn-cerrar-eval"].forEach(id=>{ const el = document.getElementById(id); if(el) el.style.display = "none"; });
+      const yaEnv = ev.revision_estado === "por_revisar";
+      const b = document.createElement("button"); b.className = "btn btn-primary"; b.style.marginBottom = "20px";
+      b.textContent = yaEnv ? "✓ Enviada a revisión" : "📤 Terminé la visita: enviar a revisión"; b.disabled = yaEnv;
+      b.onclick = async () => {
+        const r = await persistEntity("evaluaciones", ev.id, "UPDATE", {revision_estado:"por_revisar", enviada_por: state.profile.id, enviada_at: new Date().toISOString()});
+        ev.revision_estado = "por_revisar"; state.currentEvaluacion = ev;
+        showError(r.queued ? "Se enviará a revisión cuando vuelva la conexión." : "Enviada a revisión. Saúl generará el reporte."); renderDiagnosticoEvaluacion();
+      };
+      document.getElementById("btn-pdf").insertAdjacentElement("beforebegin", b);
+    } else if(ev.revision_estado === "por_revisar"){
+      const aviso = document.createElement("div"); aviso.className = "card"; aviso.style.borderColor = "var(--gold-500)";
+      aviso.innerHTML = `<b>📥 Visita enviada a revisión por tu colaborador</b><p class="muted small" style="margin:4px 0 8px">Revisa los puntos, corrige si hace falta y genera los PDF.</p><button class="btn btn-ghost" id="btn-revisada">✓ Marcar como revisada</button>`;
+      document.getElementById("btn-pdf").insertAdjacentElement("beforebegin", aviso);
+      aviso.querySelector("#btn-revisada").onclick = async () => { await persistEntity("evaluaciones", ev.id, "UPDATE", {revision_estado:"revisada", revisada_at: new Date().toISOString()}); ev.revision_estado = "revisada"; renderDiagnosticoEvaluacion(); };
+    }
+  }
   const btnCerrar = document.getElementById("btn-cerrar-eval");
   if(btnCerrar) btnCerrar.onclick = async () => {
     btnCerrar.disabled = true; btnCerrar.textContent = "Cerrando...";
@@ -3773,6 +3810,7 @@ async function renderSeguimientoVisita(){
       await patchCache("ev:"+ev.id+":hallazgos_todos", (l)=>[...(l||[]), {...payload, id: hid, created_at:new Date().toISOString()}]);
       paint();
     };
+    if(!esAdmin()) document.getElementById("btn-seg-pdf").style.display = "none";
     document.getElementById("btn-seg-pdf").onclick = async (e)=>{
       const b = e.target; b.disabled = true; b.textContent = "Generando PDF…";
       try{ await generarPdfSeguimiento({ev, baseEv, items, modMap, prevMap, nombreExpediente}); }
@@ -6234,6 +6272,143 @@ async function generarPdfExpAudit(ev, items, exps){
   c.body("Conservación: todo expediente debe guardarse al menos 5 años desde el último acto médico (NOM-004, 5.4).", {size:9.5, color:c.SOFT, lh:12});
   c.y+=6; c.body("Auditoría preventiva sobre una muestra; no sustituye una verificación de la autoridad. Los datos de pacientes no se registran en la plataforma.", {size:8.5, color:c.SOFT, lh:11});
   await c.save(`AUDITORIA-EXPEDIENTES-${carpetaSlug(clinica,4)}-${ev.fecha_visita||""}.pdf`);
+}
+
+
+/* ------------------------- Equipo: colaboradores con acceso limitado -------------------------
+   Admin: invita (correo de Supabase), suspende/reactiva, asigna expedientes por dependencia.
+   Colaborador: ve solo lo asignado, captura check-ups regulatorios, NO genera PDF; envía la
+   visita a revisión y el admin la revisa y genera los PDF. */
+const APP_URL = "https://26elementos-tech.github.io/Plataforma-madre-/";
+function esAdmin(){ return state.profile && state.profile.rol === "admin"; }
+let AREAS_CACHE = null;
+async function getAreas(){
+  if(AREAS_CACHE) return AREAS_CACHE;
+  const r = await cachedRead("cat:areas", ()=>sb.from("areas").select("id,codigo,nombre"));
+  AREAS_CACHE = r.data || []; return AREAS_CACHE;
+}
+async function misAreasEnExpediente(expId){
+  const [areas, asig] = await Promise.all([getAreas(), cachedRead("asig:"+expId, ()=>sb.from("expediente_especialistas").select("area_id").eq("expediente_id", expId).eq("user_id", state.profile.id).is("revocado_at", null))]);
+  const ids = new Set((asig.data||[]).map(x=>x.area_id));
+  return new Set(areas.filter(a=>ids.has(a.id)).map(a=>a.codigo));
+}
+async function llamarEquipo(payload){
+  const { data: s } = await sb.auth.getSession();
+  const token = s?.session?.access_token;
+  const resp = await fetch(SUPABASE_URL + "/functions/v1/equipo-admin", {method:"POST", headers:{"Content-Type":"application/json", "Authorization":"Bearer "+token, "apikey": SUPABASE_ANON_KEY}, body: JSON.stringify(payload)});
+  const j = await resp.json().catch(()=>({error:"Respuesta inválida"}));
+  if(!resp.ok || j.error) throw new Error(j.error || ("Error "+resp.status));
+  return j;
+}
+async function renderEquipo(){
+  if(!esAdmin()){ go("dashboard"); return; }
+  $app.innerHTML = `
+    <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+      <div style="flex:1"><p class="brand">MI EQUIPO</p><h1 style="font-size:18px">Colaboradores</h1></div></div></div>
+    <div class="content">
+      <p class="muted small" style="margin:0 0 10px">Tus colaboradores solo ven los expedientes y dependencias que les asignes. Capturan check-ups regulatorios, pero no generan ni descargan PDF: te envían la visita a revisión.</p>
+      <div class="card"><div class="section-title">Invitar colaborador</div>
+        <label>Nombre completo</label><input type="text" id="eq-nombre">
+        <label>Correo</label><input type="email" id="eq-correo">
+        <button class="btn btn-primary" id="eq-invitar" style="width:100%;margin-top:12px">Enviar invitación</button>
+        <p class="muted small" style="margin:8px 0 0">Le llega un correo para crear su contraseña. Después le asignas expedientes desde cada expediente.</p>
+      </div>
+      <div class="card"><div class="section-title">Colaboradores</div><div id="eq-list"><div class="muted small">Cargando…</div></div></div>
+    </div>`;
+  document.getElementById("btn-back").onclick = () => go("dashboard");
+  document.getElementById("eq-invitar").onclick = async (e) => {
+    const nombre = document.getElementById("eq-nombre").value.trim(), email = document.getElementById("eq-correo").value.trim();
+    if(!nombre || !email){ showError("Escribe nombre y correo."); return; }
+    if(!navigator.onLine){ showError("Invitar necesita conexión."); return; }
+    const b = e.currentTarget; b.disabled = true; b.textContent = "Enviando…";
+    try{ await llamarEquipo({action:"invitar", nombre, email, redirectTo: APP_URL}); showError(`Invitación enviada a ${email}.`); renderEquipo(); }
+    catch(err){ showError("No se pudo invitar: " + err.message); b.disabled = false; b.textContent = "Enviar invitación"; }
+  };
+  const { data, error } = await sb.from("profiles").select("id,nombre_completo,correo,rol,activo").neq("rol","admin").order("nombre_completo");
+  const list = document.getElementById("eq-list");
+  if(error){ list.innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
+  if(!(data||[]).length){ list.innerHTML = `<div class="empty-note">Aún no tienes colaboradores.</div>`; return; }
+  const { data: asig } = await sb.from("expediente_especialistas").select("user_id").is("revocado_at", null);
+  const nAsig = {}; (asig||[]).forEach(a=>{ nAsig[a.user_id] = (nAsig[a.user_id]||0)+1; });
+  list.innerHTML = "";
+  data.forEach(p=>{
+    const row = document.createElement("div"); row.className = "small-row"; row.style.display = "block";
+    row.innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(p.nombre_completo||"")}</b><span class="small" style="color:${p.activo?"#2E7D4F":"#B3261E"}">${p.activo?"Activo":"Suspendido"}</span></div>
+      <div class="muted small">${esc(p.correo||"")} · ${nAsig[p.id]||0} asignación(es)</div>
+      <button class="btn btn-ghost" style="margin-top:8px;${p.activo?"color:var(--bad)":""}">${p.activo?"Suspender acceso":"Reactivar acceso"}</button>`;
+    row.querySelector("button").onclick = async () => {
+      const c = await askChoice(p.activo ? `¿Suspender a ${p.nombre_completo}? Pierde el acceso de inmediato.` : `¿Reactivar a ${p.nombre_completo}?`, [{v:1,label:p.activo?"Sí, suspender":"Sí, reactivar"},{v:0,label:"Cancelar"}], o=>o.label);
+      if(!c || !c.v) return;
+      try{ await llamarEquipo({action: p.activo ? "suspender" : "reactivar", user_id: p.id}); renderEquipo(); }
+      catch(err){ showError("No se pudo: " + err.message); }
+    };
+    list.appendChild(row);
+  });
+}
+/* Tarjeta "Equipo asignado" dentro del expediente (solo admin): colaborador × dependencia */
+async function renderEquipoAsignado(container, exp){
+  const card = document.createElement("div"); card.className = "card";
+  card.innerHTML = `<div class="section-title">Equipo asignado</div><div id="ea-body"><div class="muted small">Cargando…</div></div>`;
+  container.appendChild(card);
+  if(!navigator.onLine){ card.querySelector("#ea-body").innerHTML = `<div class="muted small">Sin conexión.</div>`; return; }
+  const [areas, { data: colabs }, { data: asig }] = await Promise.all([
+    getAreas(), sb.from("profiles").select("id,nombre_completo,activo").neq("rol","admin").order("nombre_completo"),
+    sb.from("expediente_especialistas").select("id,user_id,area_id,revocado_at").eq("expediente_id", exp.id)]);
+  const body = card.querySelector("#ea-body");
+  const deps = areas.filter(a=>["cofepris","stps","proteccion_civil"].includes(a.codigo));
+  if(!(colabs||[]).length){ body.innerHTML = `<div class="muted small">Aún no tienes colaboradores. Invítalos desde "Mi equipo" en la pantalla principal.</div>`; return; }
+  body.innerHTML = `<p class="muted small" style="margin:0 0 8px">Toca una dependencia para dar o quitar acceso a este expediente.</p>`;
+  (colabs||[]).forEach(p=>{
+    const row = document.createElement("div"); row.style.padding = "8px 0"; row.style.borderBottom = "1px solid var(--line)";
+    row.innerHTML = `<div style="font-weight:500">${esc(p.nombre_completo||"")}${p.activo?"":" <span class='muted small'>(suspendido)</span>"}</div><div class="chip-grid" style="margin-top:6px"></div>`;
+    const grid = row.querySelector(".chip-grid");
+    deps.forEach(d=>{
+      const vig = (asig||[]).find(a=>a.user_id===p.id && a.area_id===d.id && !a.revocado_at);
+      const ch = document.createElement("span"); ch.className = "chip" + (vig?" selected":""); ch.textContent = d.codigo==="proteccion_civil" ? "Protección Civil" : d.codigo.toUpperCase();
+      ch.onclick = async () => {
+        let r;
+        if(vig) r = await sb.from("expediente_especialistas").update({revocado_at: new Date().toISOString()}).eq("id", vig.id);
+        else r = await sb.from("expediente_especialistas").insert({expediente_id: exp.id, user_id: p.id, area_id: d.id, otorgado_por: state.profile.id});
+        if(r.error){ showError("No se pudo: " + r.error.message); return; }
+        card.remove(); renderEquipoAsignado(container, exp);
+      };
+      grid.appendChild(ch);
+    });
+    body.appendChild(row);
+  });
+}
+/* Bandeja del admin: visitas que los colaboradores enviaron a revisión */
+async function renderPorRevisar(container){
+  if(!navigator.onLine) return;
+  const { data } = await sb.from("evaluaciones").select("id,expediente_id,fecha_visita,nivel_checkup,enviada_at,enviada_por,expediente:expedientes(nombre_expediente),area:areas(codigo)").eq("revision_estado","por_revisar").order("enviada_at",{ascending:false});
+  if(!(data||[]).length) return;
+  const { data: perf } = await sb.from("profiles").select("id,nombre_completo");
+  const nom = {}; (perf||[]).forEach(p=>nom[p.id]=p.nombre_completo);
+  const card = document.createElement("div"); card.className = "card"; card.style.borderColor = "var(--gold-500)";
+  card.innerHTML = `<div class="section-title">📥 Por revisar (${data.length})</div>`;
+  data.forEach(ev=>{
+    const row = document.createElement("div"); row.className = "small-row"; row.style.cursor = "pointer";
+    row.innerHTML = `<span>${esc(ev.expediente?.nombre_expediente||"")} · ${esc((ev.area?.codigo||"").replace("proteccion_civil","P. Civil").toUpperCase())}</span><span class="muted small">${esc(nom[ev.enviada_por]||"")}</span>`;
+    row.onclick = () => go("diagnostico-evaluacion", {currentEvaluacion: ev, currentExpediente: {id: ev.expediente_id, nombre_expediente: ev.expediente?.nombre_expediente}});
+    card.appendChild(row);
+  });
+  container.prepend(card);
+}
+/* Crear contraseña al entrar por invitación o recuperación */
+async function quizasCrearContrasena(){
+  if(!AUTH_HASH_TYPE || state._pwdAsked) return; state._pwdAsked = true;
+  const sheet = openModal(`<h3 style="margin:0 0 6px">Crea tu contraseña</h3><p class="muted small" style="margin:0 0 10px">Con ella entrarás a la plataforma de Elementos Financieros.</p>
+    <input type="password" id="pw1" placeholder="Nueva contraseña (mínimo 8 caracteres)"><input type="password" id="pw2" placeholder="Repítela" style="margin-top:8px">
+    <div id="pw-err"></div><button class="btn btn-primary" id="pw-ok" style="width:100%;margin-top:12px">Guardar contraseña</button>`);
+  sheet.querySelector("#pw-ok").onclick = async () => {
+    const a = sheet.querySelector("#pw1").value, b = sheet.querySelector("#pw2").value, er = sheet.querySelector("#pw-err");
+    if(a.length < 8){ er.innerHTML = `<div class="err">Mínimo 8 caracteres.</div>`; return; }
+    if(a !== b){ er.innerHTML = `<div class="err">No coinciden.</div>`; return; }
+    const { error } = await sb.auth.updateUser({password: a});
+    if(error){ er.innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
+    try{ history.replaceState(null, "", location.pathname); }catch(e){}
+    closeModal(); showError("Contraseña guardada.");
+  };
 }
 
 /* ------------------------------- Init ------------------------------- */
