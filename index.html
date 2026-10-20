@@ -1569,6 +1569,7 @@ async function render(){
   if(state.screen==="leg-wizard") return renderLegWizard();
   if(state.screen==="exp-audit") return renderExpAudit();
   if(state.screen==="equipo") return renderEquipo();
+  if(state.screen==="radar2027") return renderRadar2027();
   if(state.screen==="leg-resultado") return renderLegResultado();
   if(state.screen==="fis-resultado") return renderFisResultado();
   if(state.screen==="fin-resultado") return renderFinResultado();
@@ -1680,7 +1681,7 @@ async function renderDashboard(){
 
   c.innerHTML = `
     ${(DASH_VER_ARCHIVADOS || !esAdmin()) ? "" : `<button class="action-btn" id="btn-new-exp"><span>+ Nuevo expediente</span><span>→</span></button>`}
-    ${esAdmin() && !DASH_VER_ARCHIVADOS ? `<button class="btn btn-ghost" id="btn-equipo" style="margin-bottom:12px">👥 Mi equipo</button>` : ""}
+    ${esAdmin() && !DASH_VER_ARCHIVADOS ? `<div style="display:flex;gap:8px;margin-bottom:12px"><button class="btn btn-ghost" id="btn-equipo" style="flex:1">👥 Mi equipo</button><button class="btn btn-ghost" id="btn-radar" style="flex:1">📡 Radar 2027</button></div>` : ""}
     <div id="dash-revisar"></div>
     ${base.length > 3 ? `<input type="search" id="dash-search" placeholder="Buscar expediente…" value="${esc(DASH_BUSQUEDA)}" style="margin:4px 0 12px">` : ""}
     <div id="exp-list"></div>
@@ -1693,6 +1694,7 @@ async function renderDashboard(){
   document.getElementById("btn-toggle-arch").onclick = () => { DASH_VER_ARCHIVADOS = !DASH_VER_ARCHIVADOS; DASH_BUSQUEDA = ""; renderDashboard(); };
   if(!esAdmin()) document.getElementById("btn-toggle-arch").style.display = "none";
   const bEq = document.getElementById("btn-equipo"); if(bEq) bEq.onclick = () => go("equipo");
+  const bRd = document.getElementById("btn-radar"); if(bRd) bRd.onclick = () => go("radar2027");
   if(esAdmin() && !DASH_VER_ARCHIVADOS) renderPorRevisar(document.getElementById("dash-revisar")).catch(()=>{});
 
   const list = document.getElementById("exp-list");
@@ -5472,7 +5474,7 @@ async function fisIniciar(exp){
     const { data } = await sb.from("evaluaciones_financieras").select("datos").eq("expediente_id", exp.id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1);
     const f = data && data[0] && data[0].datos;
     if(f){
-      if(f.regimen) datos.regimen = f.regimen;
+      if(f.regimen){ datos.regimen = f.regimen; datos.operaComo = /RESICO persona física/.test(f.regimen) ? "RESICO persona física" : /actividad profesional/.test(f.regimen) ? "Persona física – actividad profesional" : /moral/.test(f.regimen) ? "Persona moral" : undefined; }
       const mapPago = {"Sueldo / nómina":"Sueldo / nómina","Honorarios facturados":"Honorarios facturados","Retira sin comprobante":"Retira sin comprobante","Dividendos":"Dividendos","No sabe":"No sabe"};
       if(f.formaPago) datos.pagoMedico = mapPago[f.formaPago];
       if(f.cuentasSeparadas) datos.separadas = f.cuentasSeparadas;
@@ -5495,14 +5497,15 @@ async function fisGuardar(ev, estatus){
 /* ------------------------- Captura: 5 grupos + documentos ------------------------- */
 function renderFisWizard(){
   const ev = state.fisEval; if(!ev){ go("dashboard"); return; }
-  const total = FIS_GRUPOS.length + 1, esDocs = ev.secIdx === FIS_GRUPOS.length;
-  const g = esDocs ? null : FIS_GRUPOS[ev.secIdx];
+  const GW = [...FIS_GRUPOS, FIS_PERFIL];
+  const total = GW.length + 1, esDocs = ev.secIdx === GW.length;
+  const g = esDocs ? null : GW[ev.secIdx];
   $app.innerHTML = `
     <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
       <div style="flex:1"><p class="brand">CHECK-UP FISCAL · ${ev.secIdx+1} DE ${total}</p><h1 style="font-size:18px">${esDocs?"Documentos para el fiscalista":esc(g.nombre)}</h1></div></div>
       <div style="height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin-top:10px"><div style="height:4px;width:${Math.round(100*(ev.secIdx+1)/total)}%;background:var(--gold-500);border-radius:2px"></div></div></div>
     <div class="content">
-      <p class="muted small" style="margin:0 0 10px">${esDocs ? "Marca qué te entregó el médico. Pide copias, nunca contraseñas ni archivos de la e.firma." : g.id==="contador" ? "Hechos, no opiniones: lo que el médico recibe hoy de su contador." : "Lo que diga el médico. Si no sabe, eso también es un dato."}</p>
+      <p class="muted small" style="margin:0 0 10px">${esDocs ? "Marca qué te entregó el médico. Pide copias, nunca contraseñas ni archivos de la e.firma." : g.id==="contador" ? "Hechos, no opiniones: lo que el médico recibe hoy de su contador." : g.id==="perfil2027" ? "Con esto la plataforma detecta sus oportunidades fiscales de 2027." : "Lo que diga el médico. Si no sabe, eso también es un dato."}</p>
       <div id="fis-form"></div>
       <div id="fis-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
       <div style="display:flex;gap:10px">${ev.secIdx>0?`<button class="btn btn-ghost" id="fis-prev" style="flex:1">← Anterior</button>`:""}
@@ -5548,6 +5551,7 @@ function renderFisResultado(){
         <div class="area-sub">Acompañamiento contable: <b style="color:${FIS_COLOR[r.contador]}">${FIS_LABEL[r.contador]}</b></div></div>
       </div>
       <div class="card"><div class="section-title">Por grupo</div>${r.grupos.map(x=>`<div class="small-row"><span>${esc(x.g.nombre)}</span><b style="color:${FIS_COLOR[x.nivel]}">● ${FIS_LABEL[x.nivel]}</b></div>`).join("")}</div>
+      <div class="card" id="fis-2027"><div class="section-title">Oportunidades 2027</div><div class="muted small">Calculando…</div></div>
       <div class="card"><div class="section-title">Paquete para el fiscalista</div>
         <div class="small-row"><span>Documentos entregados</span><b>${docsEnt} de ${docsAplican}</b></div>
         <label class="small muted" style="margin-top:8px">Fiscalista de la Red asignado</label>
@@ -5589,6 +5593,10 @@ function renderFisResultado(){
   if(bc) bc.onclick = async ()=>{ const x = await fisGuardar(ev, "completada"); if(!x.ok){ showError(x.offline?"Completar necesita conexión.":"No se pudo guardar: "+(x.error?.message||"")); return; } go("fis-resultado"); };
   const pdfBtn = (id, fn) => { document.getElementById(id).onclick = async (e)=>{ const b=e.currentTarget; b.disabled=true; try{ await fn(ev); }catch(err){ showError("No se pudo generar el PDF: "+(err&&err.message?err.message:err)); } b.disabled=false; }; };
   pdfBtn("fis-pdf-med", generarPdfFisMedico); pdfBtn("fis-pdf-fis", generarPdfFisFiscalista);
+  (async()=>{ const box = document.getElementById("fis-2027"); if(!box) return;
+    const [est, f] = await Promise.all([getEstado2027(), ultFinanzas(ev.expediente_id)]); const ops = fisOportunidades2027(ev.datos, f);
+    box.innerHTML = `<div class="section-title">Oportunidades 2027 (${ops.length})</div>` + (ops.length ? ops.map(o=>`<div class="small-row" style="display:block"><b style="color:${o.prio==="alta"?"#B3261E":"#B8860B"}">${o.prio==="alta"?"●":"○"} ${esc(o.titulo)}</b><div class="muted small">${esc(o.fiscalista)}</div></div>`).join("") : `<div class="muted small">Sin oportunidades con los datos capturados. Completa el paso "Perfil y 2027".</div>`) + `<p class="muted small" style="margin:6px 0 0">${esc(etiqueta2027(est))}.</p>`;
+  })().catch(()=>{});
 }
 
 /* ------------------------- PDFs ------------------------- */
@@ -5617,6 +5625,7 @@ async function generarPdfFisMedico(ev){
     c.heading(`Avance de tu especialista fiscal: ${pend.filter(x=>x.estatus==="Resuelto").length} de ${pend.length} resueltos`);
     pend.forEach(p=>c.row(p.tarea, p.estatus + (p.fecha?` · ${p.fecha}`:""), p.estatus==="Resuelto"));
   }
+  await pdfSeccion2027(c, ev, "medico");
   c.y+=6; c.checkBreak(76); doc.setFillColor(241,231,210); doc.roundedRect(c.margin, c.y, c.maxW, 62, 6, 6, "F");
   doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.setTextColor(...c.NAVY); doc.text("Siguiente paso", c.margin+14, c.y+20);
   doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(...c.INK);
@@ -5660,7 +5669,8 @@ async function generarPdfFisFiscalista(ev){
   c.heading(`5. Plan de trabajo (${pend.filter(x=>x.estatus==="Resuelto").length}/${pend.length} resueltos)`);
   if(pend.length) pend.forEach(p=>c.row(p.tarea, p.estatus + (p.fecha?` · ${p.fecha}`:"")));
   else c.body("Por definir por el fiscalista.", {size:10});
-  c.heading("6. Para cerrar con el médico");
+  await pdfSeccion2027(c, ev, "fiscalista");
+  c.heading("7. Para cerrar con el médico");
   ["Confirmar la situación real ante el SAT (opinión de cumplimiento y buzón).","Poner al día lo pendiente y atender requerimientos.","Definir el esquema de facturación correcto, incluido el tratamiento del IVA en servicios estéticos.","Definir cómo se paga el médico y separar clínica y persona.","Ordenar el efectivo no bancarizado para que el exceso de efectivo pueda dirigirse a reserva, protección e inversión."].forEach(t=>c.body("•  "+t, {size:10.5, indent:4}));
   c.y+=8; c.body("Información declarada por el médico y no verificada contra el SAT. Documento de trabajo para el especialista.", {size:8.5, color:c.SOFT, lh:11});
   await c.save(`FISCALISTA-PAQUETE-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
@@ -6049,11 +6059,12 @@ async function generarPdfLegSuscripcion(ev){
 const SPA_SERVICIOS = [
   {s:"Masajes", m:false}, {s:"Faciales con cosméticos", m:false}, {s:"Depilación con cera", m:false},
   {s:"Envolturas y exfoliación corporal", m:false}, {s:"Manicure y pedicure", m:false},
+  {s:"Aparatología corporal de uso cosmético (cavitación, radiofrecuencia, vacumterapia, presoterapia)", m:false},
   {s:"Depilación láser o IPL", m:true, ap:true, sv:["Depilación láser","Láser dermatológico"]},
-  {s:"Radiofrecuencia", m:true, ap:true, sv:["Radiofrecuencia"]},
+  {s:"Radiofrecuencia de grado médico", m:true, ap:true, sv:["Radiofrecuencia"]},
   {s:"HIFU (ultrasonido focalizado)", m:true, ap:true, sv:["Tratamientos faciales"]},
-  {s:"Criolipólisis", m:true, ap:true, sv:["Tratamientos corporales"]},
-  {s:"Cavitación", m:true, ap:true, sv:["Tratamientos corporales"]},
+  {s:"Criolipólisis de grado médico", m:true, ap:true, sv:["Tratamientos corporales"]},
+  {s:"Cavitación de grado médico", m:true, ap:true, sv:["Tratamientos corporales"]},
   {s:"Láser facial o dermatológico", m:true, ap:true, sv:["Láser dermatológico"]},
   {s:"Hidrafacial o microdermoabrasión con equipo", m:true, ap:true, sv:["Hidrafacial"]},
   {s:"Microneedling o dermapen", m:true, sv:["Microneedling"]},
@@ -6408,6 +6419,122 @@ async function quizasCrearContrasena(){
     if(error){ er.innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
     try{ history.replaceState(null, "", location.pathname); }catch(e){}
     closeModal(); showError("Contraseña guardada.");
+  };
+}
+
+
+/* ------------------------- Fiscal 2027: perfil, oportunidades y Radar -------------------------
+   Basado en la PROPUESTA del Paquete Económico 2027 (regularización sin multas ni recargos de
+   2025 y anteriores; RESICO PF hasta $5 MDP; IVA opcional 7% en RESICO; repatriación al 7.5%).
+   El estado (propuesta/aprobado) lo cambia Saúl en el Radar; todos los textos lo muestran. */
+const FIS_PERFIL = {id:"perfil2027", nombre:"Perfil y 2027", preguntas:[
+  {k:"especialidad", t:"Especialidad del médico", o:[["Ortopedia y traumatología","n"],["Neurocirugía / columna","n"],["Cirugía plástica","n"],["Cardiología","n"],["Medicina estética","n"],["Odontología","n"],["Otra","n"]]},
+  {k:"ingresosRango", t:"Ingresos anuales aproximados", o:[["Menos de $3.5 millones","n"],["De $3.5 a $5 millones","n"],["De $5 a $20 millones","n"],["Más de $20 millones","n"],["No sabe","n"]]},
+  {k:"operaComo", t:"Cómo opera fiscalmente", o:[["Persona física – actividad profesional","n"],["RESICO persona física","n"],["Sociedad civil","n"],["Persona moral","n"],["No sabe","n"]]},
+  {k:"pendientes2025", t:"¿Tiene impuestos pendientes de 2025 o antes?", o:[["No","n"],["Sí","n"],["No sabe","n"]]},
+  {k:"extranjero", t:"¿Tiene recursos en el extranjero?", o:[["No","n"],["Sí","n"],["Prefiere no decir","n"]]},
+]};
+let REGLAS_2027 = null;
+async function getEstado2027(){
+  if(REGLAS_2027) return REGLAS_2027;
+  try{ const { data } = await sb.from("config_plataforma").select("valor").eq("clave","reglas_2027").maybeSingle(); REGLAS_2027 = (data && data.valor && data.valor.estado) || "propuesta"; }
+  catch(e){ REGLAS_2027 = "propuesta"; }
+  return REGLAS_2027;
+}
+function etiqueta2027(estado){ return estado === "aprobado" ? "Paquete Económico 2027 (aprobado)" : "Propuesta del Paquete Económico 2027, sujeta a aprobación final"; }
+function fisOportunidades2027(d, f){
+  d = d || {}; const ops = [];
+  const efectivoSinBanco = f && ((f.efectivoNoDepMes||0) > 0 || (f.efectivoFuera||0) > 0);
+  const pf = d.operaComo === "Persona física – actividad profesional";
+  const hasta5 = ["Menos de $3.5 millones","De $3.5 a $5 millones"].includes(d.ingresosRango);
+  const estetico = ["Medicina estética","Cirugía plástica"].includes(d.especialidad);
+  const motivosReg = [];
+  if(d.pendientes2025 === "Sí") motivosReg.push("impuestos pendientes de 2025 o antes");
+  if(d.mensuales === "Atrasadas") motivosReg.push("declaraciones mensuales atrasadas");
+  if(d.anual === "No") motivosReg.push("declaración anual sin presentar");
+  if(d.requerimientos === "Sí, sin atender") motivosReg.push("requerimientos del SAT sin atender");
+  if(d.facturaCobros && d.facturaCobros !== "Siempre") motivosReg.push("cobros sin facturar");
+  if(efectivoSinBanco) motivosReg.push("efectivo de cobros sin depositar");
+  if(motivosReg.length) ops.push({k:"reg", prio:"alta", titulo:"Ponerse al corriente sin multas ni recargos",
+    medico:"Puede poner en orden sus impuestos pendientes pagando lo que debe, sin multas ni recargos encima.",
+    fiscalista:`Evaluar regularización con reducción de multas y recargos (créditos de 2025 y anteriores). Motivos: ${motivosReg.join(", ")}.`});
+  if(pf && hasta5) ops.push({k:"resico", prio:"alta", titulo:"Podría pagar menos impuestos en RESICO",
+    medico:"Por sus ingresos, podría cambiarse a un régimen simplificado y pagar bastante menos impuesto, dentro de la ley.",
+    fiscalista:`Persona física con actividad profesional y ingresos ${String(d.ingresosRango).toLowerCase()}: evaluar RESICO PF con límite propuesto de $5 MDP.`});
+  if((pf && hasta5 || d.operaComo === "RESICO persona física") && (estetico || d.iva !== "Sí, lo revisó con su contador")) ops.push({k:"iva", prio:"media", titulo:"Revisar el IVA de sus tratamientos",
+    medico:"Conviene revisar si sus tratamientos causan IVA y si le conviene la nueva opción simplificada.",
+    fiscalista:"Revisar qué servicios están gravados (tratamientos estéticos) y evaluar la opción de IVA al 7% sobre contraprestaciones gravadas cobradas en RESICO."});
+  if(d.extranjero === "Sí") ops.push({k:"repat", prio:"media", titulo:"Traer a México recursos del extranjero con impuesto reducido",
+    medico:"Si tiene dinero fuera de México, podría traerlo pagando un impuesto menor al normal.",
+    fiscalista:"Evaluar el régimen temporal de repatriación al 7.5% (recursos en el extranjero al 8-sep-2026, retorno a más tardar el 31-dic-2027)."});
+  const motivosDisc = [];
+  if(d.pagoMedico === "Retira sin comprobante") motivosDisc.push("retiro sin comprobante");
+  if(efectivoSinBanco) motivosDisc.push("efectivo sin depositar");
+  if(d.separadas === "No") motivosDisc.push("cuentas personales y de la clínica mezcladas");
+  if(motivosDisc.length) ops.push({k:"disc", prio:"alta", titulo:"Riesgo de que el SAT cobre sobre gastos no justificados",
+    medico:"Si sus gastos no cuadran con lo que declara, el SAT puede cobrarle impuestos sobre la diferencia. Hoy es el mejor momento para ordenarlo.",
+    fiscalista:`Riesgo de discrepancia fiscal (art. 91 LISR). Motivos: ${motivosDisc.join(", ")}.`});
+  const orden = {alta:0, media:1};
+  return ops.sort((a,b)=>orden[a.prio]-orden[b.prio]);
+}
+async function ultFinanzas(expId){
+  try{ const { data } = await sb.from("evaluaciones_financieras").select("*").eq("expediente_id", expId).is("anulado_at", null).order("fecha",{ascending:false}).limit(1); return data && data[0] ? finCalcular(data[0].datos, data[0].supuestos) : null; }
+  catch(e){ return null; }
+}
+/* Sección para los PDF (médico y fiscalista) */
+async function pdfSeccion2027(c, ev, modo){
+  const est = await getEstado2027(); const f = await ultFinanzas(ev.expediente_id);
+  const ops = fisOportunidades2027(ev.datos, f);
+  c.heading(modo==="medico" ? "2027: lo que le conviene" : "6. Oportunidades y riesgos 2027");
+  if(!ops.length){ c.body(modo==="medico" ? "Con lo que nos compartió, no detectamos oportunidades especiales para 2027. Aun así, conviene revisar su caso con un especialista." : "Sin oportunidades detectadas con los datos capturados.", {size:10.5}); }
+  ops.forEach(o=>{ c.body(`${o.prio==="alta"?"●":"○"}  ${o.titulo}`, {bold:true, size:11, color:o.prio==="alta"?c.RED:c.GOLD}); c.body(modo==="medico" ? o.medico : o.fiscalista, {size:10.5, lh:14}); c.y += 4; });
+  if(modo!=="medico"){ const d = ev.datos||{}; c.body(`Perfil: ${d.especialidad||"—"} · ingresos ${d.ingresosRango||"—"} · ${d.operaComo||"—"} · extranjero: ${d.extranjero||"—"}`, {size:9.5, color:c.SOFT, lh:12}); }
+  c.body(etiqueta2027(est) + ". Cada caso lo debe revisar un especialista fiscal.", {size:8.5, color:c.SOFT, lh:11});
+}
+/* Radar 2027: a quién llamar primero + validación de la hipótesis de exceso de efectivo */
+async function renderRadar2027(){
+  if(!esAdmin()){ go("dashboard"); return; }
+  $app.innerHTML = `<div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+    <div style="flex:1"><p class="brand">RADAR 2027</p><h1 style="font-size:18px">Oportunidades fiscales</h1></div></div></div>
+    <div class="content"><div id="rd"><div class="muted small">Cargando…</div></div></div>`;
+  document.getElementById("btn-back").onclick = () => go("dashboard");
+  if(!navigator.onLine){ document.getElementById("rd").innerHTML = `<div class="empty-note">El Radar necesita conexión.</div>`; return; }
+  const est = await getEstado2027();
+  const [{ data: exps }, { data: fis }, { data: fins }] = await Promise.all([
+    sb.from("expedientes").select("id,nombre_expediente").is("archivado_at", null),
+    sb.from("evaluaciones_fiscales").select("*").is("anulado_at", null).order("fecha",{ascending:false}),
+    sb.from("evaluaciones_financieras").select("*").is("anulado_at", null).order("fecha",{ascending:false})]);
+  const ultimo = (arr) => { const m = {}; (arr||[]).forEach(r=>{ if(!m[r.expediente_id]) m[r.expediente_id] = r; }); return m; };
+  const F = ultimo(fis), FN = ultimo(fins);
+  const filas = (exps||[]).filter(e=>F[e.id]).map(e=>{
+    const f = FN[e.id] ? finCalcular(FN[e.id].datos, FN[e.id].supuestos) : null;
+    const d = F[e.id].datos || {}; const ops = fisOportunidades2027(d, f);
+    return {e, d, f, ops, score: ops.filter(o=>o.prio==="alta").length*2 + ops.filter(o=>o.prio==="media").length};
+  }).sort((a,b)=>b.score-a.score);
+  const sinFis = (exps||[]).filter(e=>!F[e.id]).length;
+  // Validación de hipótesis por especialidad
+  const porEsp = {};
+  filas.forEach(r=>{ const k = r.d.especialidad || "Sin especialidad"; porEsp[k] = porEsp[k] || {n:0, conExceso:0, suma:0};
+    porEsp[k].n++; if(r.f && r.f.exceso>0){ porEsp[k].conExceso++; porEsp[k].suma += r.f.exceso; } });
+  const rd = document.getElementById("rd");
+  rd.innerHTML = `
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <div><div class="section-title" style="margin:0">Estado de las reglas</div><div class="small" style="margin-top:4px">${esc(etiqueta2027(est))}</div></div>
+      <button class="btn btn-ghost" id="rd-toggle" style="white-space:nowrap">${est==="aprobado"?"Marcar como propuesta":"Marcar como aprobado"}</button></div></div>
+    <div class="card"><div class="section-title">A quién llamar primero</div>
+      ${filas.length ? filas.map(r=>`<div class="small-row" style="display:block;cursor:pointer" data-exp="${r.e.id}">
+        <div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(r.e.nombre_expediente)}</b><span class="small" style="color:${r.score>=4?"#B3261E":r.score>=2?"#B8860B":"#2E7D4F"}">${r.ops.length} oportunidad(es)</span></div>
+        <div class="muted small">${esc(r.d.especialidad||"Sin especialidad")} · ${esc(r.d.ingresosRango||"ingresos sin dato")}${r.f && r.f.exceso>0?` · exceso de efectivo ${finM(r.f.exceso)}`:""}</div>
+        ${r.ops.length?`<div class="small" style="margin-top:4px">${r.ops.map(o=>`${o.prio==="alta"?"●":"○"} ${esc(o.titulo)}`).join("<br>")}</div>`:""}</div>`).join("") : `<div class="empty-note">Aún no hay check-ups fiscales. Haz el de cada cliente para que aparezca aquí.</div>`}
+      ${sinFis?`<p class="muted small" style="margin:8px 0 0">${sinFis} expediente(s) sin check-up fiscal todavía.</p>`:""}</div>
+    <div class="card"><div class="section-title">Validación: exceso de efectivo por especialidad</div>
+      ${Object.keys(porEsp).length ? Object.entries(porEsp).map(([k,v])=>`<div class="small-row"><span>${esc(k)} (${v.n})</span><span class="muted small">${v.conExceso} con exceso · promedio ${v.conExceso?finM(v.suma/v.conExceso):"—"}</span></div>`).join("") : `<div class="muted small">Se llenará conforme hagas check-ups fiscales y diagnósticos financieros.</div>`}</div>`;
+  rd.querySelectorAll("[data-exp]").forEach(el=>el.onclick=()=>{ const e = (exps||[]).find(x=>x.id===el.dataset.exp); EXP_TAB = "clinica"; go("expediente", {currentExpediente: e}); });
+  document.getElementById("rd-toggle").onclick = async () => {
+    const nuevo = est === "aprobado" ? "propuesta" : "aprobado";
+    const { error } = await sb.from("config_plataforma").upsert({clave:"reglas_2027", valor:{estado:nuevo}, updated_at:new Date().toISOString()});
+    if(error){ showError("No se pudo cambiar: " + error.message); return; }
+    REGLAS_2027 = nuevo; renderRadar2027();
   };
 }
 
