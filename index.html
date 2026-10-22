@@ -4679,21 +4679,156 @@ function opAnalizar(respuestas){
 }
 
 /* ------------------------- Wizard: un área por pantalla (+ datos económicos) ------------------------- */
+
+/* ------------------------- Evaluación del equipo (módulo global del Check-up Operativo) -------------------------
+   Configuración global; datos por expediente en respuestas.__equipo. No altera el cálculo de madurez.
+   Distingue productividad (trabajo y uso de capacidad), contribución (aporte directo o indirecto) y
+   rentabilidad (solo si hay ingresos atribuibles y costo). Nunca concluye "no rentable" sin datos. */
+const EQ_TIPOS = {
+  clinico:{label:"Atención a pacientes", unidad:"sesiones o servicios al mes", ind:["horas","unidades","duracion","precio","cumplimiento","calidad","autonomia","responsabilidades"]},
+  ventas:{label:"Ventas y captación", unidad:"pacientes o ventas cerradas al mes", ind:["horas","unidades","ingresos","cumplimiento","calidad","autonomia","responsabilidades"]},
+  operaciones:{label:"Operación y coordinación", unidad:"tareas o procesos a su cargo", ind:["horas","cumplimiento","calidad","autonomia","responsabilidades","duenoLiberado"]},
+  administracion:{label:"Administración", unidad:"tareas al mes", ind:["horas","cumplimiento","calidad","autonomia","responsabilidades","duenoLiberado"]},
+  marketing:{label:"Marketing y redes", unidad:"consultas o prospectos generados al mes", ind:["horas","unidades","cumplimiento","calidad","autonomia","responsabilidades"]},
+  externo:{label:"Servicio externo (contador, consultor, etc.)", unidad:"entregables al mes", ind:["cumplimiento","calidad","responsabilidades"]},
+};
+const EQ_REL = ["Nómina","Honorarios","Comisión","Externo / proveedor","Familiar o socio","No definido"];
+const EQ_ESC = ["—","Bajo","Regular","Bueno","Excelente"];
+const EQ_FALTA_LBL = {horas:"horas disponibles por semana", unidades:"volumen de trabajo al mes", duracion:"duración promedio por sesión", precio:"ingreso promedio por sesión o servicio", ingresos:"ingresos atribuibles", cumplimiento:"cumplimiento de responsabilidades", calidad:"calidad del trabajo", autonomia:"nivel de autonomía", responsabilidades:"responsabilidades definidas", duenoLiberado:"tiempo del dueño que libera"};
+const eqN = v => { const n = parseFloat(String(v??"").replace(/[^0-9.]/g,"")); return isFinite(n) && n>0 ? n : null; };
+function eqCalcular(eq, eco){
+  const cols = (eq && eq.colaboradores) || [];
+  const venta = eco ? eqN(eco.venta) : null;
+  const personas = cols.map(c=>{
+    const t = EQ_TIPOS[c.tipo] || EQ_TIPOS.operaciones; const pago = eqN(c.pago);
+    const falta = t.ind.filter(k=>{
+      if(["cumplimiento","calidad","autonomia"].includes(k)) return !c[k];
+      if(k==="responsabilidades") return !(c.responsabilidades||"").trim();
+      return eqN(c[k])===null;
+    }).map(k=>EQ_FALTA_LBL[k]);
+    if(pago===null) falta.unshift("costo mensual");
+    const m = {};
+    const horasMes = eqN(c.horas) ? eqN(c.horas)*4.33 : null;
+    if(c.tipo==="clinico"){
+      const u = eqN(c.unidades), d = eqN(c.duracion), pr = eqN(c.precio);
+      if(u && d && horasMes) m.ocupacion = Math.min(999, Math.round(100*u*d/60/horasMes));
+      if(u && pago) m.costoUnidad = pago/u;
+      if(u && pr){ m.ingreso = u*pr; if(pago){ m.contribucion = m.ingreso - pago; m.ratio = m.ingreso/pago; } }
+    } else if(c.tipo==="ventas"){
+      const ing = eqN(c.ingresos); if(ing){ m.ingreso = ing; if(pago){ m.contribucion = ing - pago; m.ratio = ing/pago; } }
+      if(eqN(c.unidades) && pago) m.costoUnidad = pago/eqN(c.unidades);
+    } else if(c.tipo==="marketing"){
+      if(eqN(c.unidades) && pago) m.costoUnidad = pago/eqN(c.unidades);
+    }
+    if(eqN(c.duenoLiberado)) m.duenoLiberado = eqN(c.duenoLiberado);
+    let lectura;
+    if(m.ratio!=null) lectura = m.ratio>=1 ? `Con los datos capturados, sus ingresos atribuibles cubren ${m.ratio.toFixed(1)} veces su costo (ESTIMADO).` : `Con los datos capturados, sus ingresos atribuibles no cubren su costo (ESTIMADO). Revisar precio, ocupación o esquema de pago antes de concluir.`;
+    else if(["clinico","ventas"].includes(c.tipo)) lectura = "Datos insuficientes para estimar rentabilidad.";
+    else lectura = "Su aporte es indirecto: se evalúa por cumplimiento, calidad, autonomía y tiempo que libera del dueño, no por ventas.";
+    return {c, tipo:t, pago, falta, m, lectura};
+  });
+  const internos = personas.filter(p=>p.c.tipo!=="externo"), externos = personas.filter(p=>p.c.tipo==="externo");
+  const costoInterno = internos.reduce((s,p)=>s+(p.pago||0),0), costoExterno = externos.reduce((s,p)=>s+(p.pago||0),0);
+  const sinResp = personas.filter(p=>!(p.c.responsabilidades||"").trim());
+  const conDueno = personas.filter(p=>(p.c.requiereDueno||"").trim());
+  const sinVerificar = personas.filter(p=>p.pago!==null && !p.c.pagoVerificado);
+  const acciones = [];
+  if(sinResp.length) acciones.push(`Definir por escrito las responsabilidades de: ${sinResp.map(p=>p.c.nombre).join(", ")}.`);
+  const clinSinU = personas.filter(p=>p.c.tipo==="clinico" && !eqN(p.c.unidades));
+  if(clinSinU.length) acciones.push(`Registrar en la agenda las sesiones realizadas por cada profesional (${clinSinU.map(p=>p.c.nombre).join(", ")}) para medir ocupación y aporte.`);
+  if(conDueno.length) acciones.push(`Documentar y delegar actividades que hoy requieren al dueño: ${conDueno.map(p=>`${p.c.nombre} (${p.c.requiereDueno})`).join("; ")}.`);
+  if(sinVerificar.length) acciones.push(`Verificar montos y naturaleza del pago de: ${sinVerificar.map(p=>p.c.nombre).join(", ")}.`);
+  const bajos = personas.filter(p=>p.c.cumplimiento && +p.c.cumplimiento<=2);
+  if(bajos.length) acciones.push(`Acordar metas y seguimiento con: ${bajos.map(p=>p.c.nombre).join(", ")} (cumplimiento bajo o regular).`);
+  return {personas, costoInterno, costoExterno, pctVenta: venta && costoInterno ? Math.round(100*costoInterno/venta) : null, sinResp, conDueno, acciones,
+    faltantes: personas.filter(p=>p.falta.length).map(p=>({nombre:p.c.nombre, falta:p.falta}))};
+}
+function renderEquipoStep(qs, ev){
+  const eq = ev.respuestas.__equipo = ev.respuestas.__equipo || {colaboradores:[]};
+  const pintar = () => {
+    qs.innerHTML = "";
+    const intro = document.createElement("div"); intro.className = "card";
+    intro.innerHTML = `<div class="small muted">Registra a cada persona según su función. Solo se calculan indicadores con datos suficientes; lo que falte se lista como información pendiente. Este módulo no cambia el nivel de madurez.</div>`;
+    qs.appendChild(intro);
+    eq.colaboradores.forEach((c,idx)=>{
+      const t = EQ_TIPOS[c.tipo] || EQ_TIPOS.operaciones;
+      const card = document.createElement("div"); card.className = "card"; card.style.padding = "14px";
+      const inp = (k,l,ph) => `<label class="small muted">${l}</label><input type="text" data-k="${k}" value="${esc(c[k]??"")}" placeholder="${ph||""}" style="margin-bottom:8px">`;
+      const sel = (k,l,opts) => `<label class="small muted">${l}</label><select data-k="${k}" style="margin-bottom:8px">${opts.map(([v,t])=>`<option value="${v}" ${String(c[k]??"")===String(v)?"selected":""}>${t}</option>`).join("")}</select>`;
+      const esc4 = k => sel(k, EQ_FALTA_LBL[k].charAt(0).toUpperCase()+EQ_FALTA_LBL[k].slice(1), EQ_ESC.map((t,i)=>[i?String(i):"",t]));
+      card.innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(c.nombre||"Sin nombre")}</b>${c.fuente?`<span class="small muted">${esc(c.fuente)}</span>`:""}</div>
+        ${inp("nombre","Nombre")}${inp("funcion","Función declarada")}
+        ${sel("tipo","Tipo de función (define los indicadores)", Object.entries(EQ_TIPOS).map(([k,v])=>[k,v.label]))}
+        ${sel("relacion","Relación de pago", EQ_REL.map(x=>[x,x]))}
+        ${inp("pago","Costo mensual (MXN)","$")}
+        <label class="small" style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><input type="checkbox" data-k="pagoVerificado" ${c.pagoVerificado?"checked":""} style="width:auto"> Monto verificado (mensual, sin duplicar)</label>
+        ${t.ind.includes("horas")?inp("horas","Horas disponibles por semana"):""}
+        ${t.ind.includes("unidades")?inp("unidades",`Volumen: ${t.unidad}`):""}
+        ${t.ind.includes("duracion")?inp("duracion","Duración promedio por sesión (minutos)"):""}
+        ${t.ind.includes("precio")?inp("precio","Ingreso promedio por sesión o servicio (MXN)"):""}
+        ${t.ind.includes("ingresos")?inp("ingresos","Ingresos atribuibles al mes (MXN)"):""}
+        ${t.ind.includes("duenoLiberado")?inp("duenoLiberado","Horas por semana que libera del dueño"):""}
+        ${esc4("cumplimiento")}${esc4("calidad")}${t.ind.includes("autonomia")?esc4("autonomia"):""}
+        <label class="small muted">Responsabilidades asignadas</label><textarea data-k="responsabilidades" rows="2" style="width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px">${esc(c.responsabilidades||"")}</textarea>
+        <label class="small muted">Actividades que todavía requieren al dueño</label><textarea data-k="requiereDueno" rows="2" style="width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px">${esc(c.requiereDueno||"")}</textarea>
+        <label class="small muted">Notas</label><textarea data-k="notas" rows="2" style="width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid var(--line);border-radius:8px">${esc(c.notas||"")}</textarea>
+        <button class="btn btn-ghost" data-del="1" style="margin-top:8px;color:var(--bad)">Quitar</button>`;
+      card.querySelectorAll("[data-k]").forEach(el=>{
+        const ev2 = el.tagName==="SELECT" || el.type==="checkbox" ? "change" : "input";
+        el.addEventListener(ev2, ()=>{ c[el.dataset.k] = el.type==="checkbox" ? el.checked : el.value; opGuardarBorrador(ev); if(el.dataset.k==="tipo") pintar(); });
+      });
+      card.querySelector("[data-del]").onclick = ()=>{ eq.colaboradores.splice(idx,1); opGuardarBorrador(ev); pintar(); };
+      qs.appendChild(card);
+    });
+    const add = document.createElement("button"); add.className = "action-btn"; add.innerHTML = "<span>+ Agregar colaborador</span><span>→</span>";
+    add.onclick = ()=>{ eq.colaboradores.push({nombre:"", tipo:"clinico", relacion:"No definido"}); opGuardarBorrador(ev); pintar(); };
+    qs.appendChild(add);
+    const r = eqCalcular(eq, ev.respuestas.__eco);
+    if(eq.colaboradores.length){
+      const res = document.createElement("div"); res.className = "card";
+      res.innerHTML = `<div class="section-title">Resumen del equipo</div>
+        <div class="small-row"><span>Costo del equipo interno (declarado)</span><b>${opMoney(r.costoInterno)}</b></div>
+        <div class="small-row"><span>Servicios externos</span><b>${opMoney(r.costoExterno)}</b></div>
+        ${r.pctVenta!==null?`<div class="small-row"><span>Equipo interno / venta mensual</span><b>${r.pctVenta}%</b></div>`:""}
+        ${r.personas.map(p=>`<div class="small-row" style="display:block"><b>${esc(p.c.nombre)}</b> <span class="muted small">· ${esc(p.tipo.label)}</span>
+          ${p.m.ocupacion!=null?`<div class="small">Ocupación estimada: ${p.m.ocupacion}%</div>`:""}
+          ${p.m.costoUnidad!=null?`<div class="small">Costo por unidad: ${opMoney(p.m.costoUnidad)}</div>`:""}
+          ${p.m.contribucion!=null?`<div class="small">Contribución estimada: ${opMoney(p.m.contribucion)} al mes</div>`:""}
+          <div class="muted small">${esc(p.lectura)}</div>
+          ${p.falta.length?`<div class="small" style="color:#B8860B">Falta: ${esc(p.falta.join(", "))}</div>`:""}</div>`).join("")}`;
+      qs.appendChild(res);
+    }
+  };
+  pintar();
+}
+/* Levantamiento previo: estado por pregunta (CONTESTADA / VALIDAR / RESPONDER / NO APLICA) */
+const PREV_LBL = {contestada:["Contestada","#2E7D4F"], validar:["Por validar","#B8860B"], responder:["Por responder","#B3261E"], na:["No aplica (propuesta)","#8B96A0"]};
+function verLevantamiento(ev){
+  const L = ev.respuestas.__levantamiento || [];
+  openModal(`<h3 style="margin:0 0 6px">Levantamiento previo</h3><p class="muted small" style="margin:0 0 10px">Lo que el cliente ya respondió. Se conserva tal cual; lo ambiguo está marcado para validar.</p>
+    ${L.map(x=>`<div style="padding:8px 0;border-bottom:1px solid var(--line)"><div class="small muted">${esc(x.id)} · ${esc(x.tema)} ${x.estado?`· <b style="color:${(PREV_LBL[x.estado]||PREV_LBL.validar)[1]}">${esc((PREV_LBL[x.estado]||PREV_LBL.validar)[0])}</b>`:""}</div><div style="font-size:14px">${esc(x.respuesta)}</div>${x.nota?`<div class="small" style="color:#B8860B;margin-top:2px">${esc(x.nota)}</div>`:""}</div>`).join("")}
+    <button class="btn btn-primary" style="width:100%;margin-top:12px" onclick="closeModal()">Cerrar</button>`);
+}
+
 function renderOpWizard(){
   const ev = state.opEval;
   if(!ev){ go("dashboard"); return; }
-  const totalAreas = OP_AREAS.length, total = totalAreas + 1;
-  const esEco = ev.areaIdx >= totalAreas;
-  const a = esEco ? null : OP_AREAS[ev.areaIdx];
+  const totalAreas = OP_AREAS.length, total = totalAreas + 2;
+  const esEquipo = ev.areaIdx === totalAreas;
+  const esEco = ev.areaIdx >= totalAreas + 1;
+  const a = (esEco || esEquipo) ? null : OP_AREAS[ev.areaIdx];
+  const PREV = ev.respuestas.__previas || {};
+  const hayPrev = Object.keys(PREV).length > 0;
   $app.innerHTML = `
     <div class="topbar"><div class="topbar-row">
       <button class="back-btn" id="btn-back">←</button>
-      <div style="flex:1"><p class="brand">CHECK-UP OPERATIVO · ${ev.areaIdx+1} DE ${total}</p><h1 style="font-size:18px">${esEco ? "Datos económicos (opcional)" : esc(a.nombre)}</h1></div>
+      <div style="flex:1"><p class="brand">CHECK-UP OPERATIVO · ${ev.areaIdx+1} DE ${total}</p><h1 style="font-size:18px">${esEco ? "Datos económicos (opcional)" : esEquipo ? "Evaluación del equipo" : esc(a.nombre)}</h1></div>
     </div>
     <div style="height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin-top:10px"><div style="height:4px;width:${Math.round(100*(ev.areaIdx+1)/total)}%;background:var(--gold-500);border-radius:2px"></div></div>
     </div>
     <div class="content">
-      <p class="muted small" style="margin:0 0 6px">${esEco ? "Si el médico comparte estos números, el reporte incluye una estimación en dinero (marcada como ESTIMADO). Si no, déjalos en blanco." : esc(a.objetivo)}</p>
+      <p class="muted small" style="margin:0 0 6px">${esEco ? "Si el médico comparte estos números, el reporte incluye una estimación en dinero (marcada como ESTIMADO). Si no, déjalos en blanco." : esEquipo ? "Productividad, contribución y autonomía de cada persona según su función. No cambia el nivel de madurez; se integra al reporte." : esc(a.objetivo)}</p>
+      ${hayPrev ? `<div class="chip-grid" style="margin:6px 0 10px"><span class="chip ${ev.soloFalta?"selected":""}" id="op-solofalta">Solo lo que falta</span><span class="chip" id="op-verlev">📋 Levantamiento previo</span></div>` : ""}
       ${ev.areaIdx===0 ? `<label class="small muted">Fecha de visita</label><input type="text" id="op-fecha" value="${esc(ev.fecha_visita)}" placeholder="AAAA-MM-DD" style="margin-bottom:12px">` : ""}
       <div id="op-qs"></div>
       <div id="op-save-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
@@ -4707,27 +4842,34 @@ function renderOpWizard(){
   const fecha = document.getElementById("op-fecha");
   if(fecha) fecha.addEventListener("change", ()=>{ ev.fecha_visita = fecha.value.trim()||ev.fecha_visita; opGuardarBorrador(ev); });
   const qs = document.getElementById("op-qs");
+  const sf = document.getElementById("op-solofalta"); if(sf) sf.onclick = ()=>{ ev.soloFalta = !ev.soloFalta; opGuardarBorrador(ev); go("op-wizard"); };
+  const vl = document.getElementById("op-verlev"); if(vl) vl.onclick = ()=> verLevantamiento(ev);
+  const prevBox = (pv) => pv ? `<div style="margin:0 0 10px;padding:10px 12px;border-radius:10px;background:#F7F3EA;border-left:4px solid ${(PREV_LBL[pv.estado]||PREV_LBL.validar)[1]}"><div class="small" style="font-weight:600;color:${(PREV_LBL[pv.estado]||PREV_LBL.validar)[1]}">${(PREV_LBL[pv.estado]||PREV_LBL.validar)[0]}${pv.fuente?` · <span class="muted">${esc(pv.fuente)}</span>`:""}</div>${pv.previo?`<div class="small" style="margin-top:4px">Previo: ${esc(pv.previo)}</div>`:""}${pv.accion?`<div class="small muted" style="margin-top:2px">→ ${esc(pv.accion)}</div>`:""}</div>` : "";
 
-  if(esEco){
+  if(esEquipo){ renderEquipoStep(qs, ev); }
+  else if(esEco){
     const eco = ev.respuestas.__eco || {};
     const card = document.createElement("div"); card.className="card";
-    card.innerHTML = OP_ECO.map(f=>`<label class="small muted">${esc(f.t)}${f.u==="$"?" (MXN)":""}</label>
+    card.innerHTML = OP_ECO.map(f=>`${prevBox(PREV["eco_"+f.id])}<label class="small muted">${esc(f.t)}${f.u==="$"?" (MXN)":""}</label>
       <input type="text" inputmode="decimal" data-eco="${f.id}" value="${esc(eco[f.id]||"")}" placeholder="${f.u==="$"?"$":"número"}" style="margin-bottom:12px">`).join("");
     card.querySelectorAll("[data-eco]").forEach(inp=> inp.addEventListener("input", ()=>{
       ev.respuestas.__eco = {...(ev.respuestas.__eco||{}), [inp.dataset.eco]: inp.value.trim()}; opGuardarBorrador(ev); }));
     qs.appendChild(card);
   } else a.preguntas.forEach(p=>{
     const r = ev.respuestas[p.id] || {};
+    const respondida = !!(r.nivel || r.na || (p.dato && (r.dato||"").trim()));
+    if(ev.soloFalta && respondida) return;
+    const pv = PREV[p.id];
     const card = document.createElement("div");
     card.className = "card"; card.style.padding = "14px";
     if(p.dato){
-      card.innerHTML = `<div class="small muted" style="margin-bottom:4px">${p.id} · Dato (no suma al nivel)</div>
+      card.innerHTML = `${prevBox(pv)}<div class="small muted" style="margin-bottom:4px">${p.id} · Dato (no suma al nivel)</div>
         <div style="font-weight:500;margin-bottom:8px">${esc(p.t)}</div>
         <textarea rows="2" style="width:100%;box-sizing:border-box;font:inherit;padding:10px;border:1px solid var(--line);border-radius:8px">${esc(r.dato||"")}</textarea>`;
       const ta = card.querySelector("textarea");
       ta.addEventListener("input", ()=>{ ev.respuestas[p.id] = {...(ev.respuestas[p.id]||{}), dato: ta.value}; opGuardarBorrador(ev); });
     } else {
-      card.innerHTML = `<div class="small muted" style="margin-bottom:4px">${p.id}${p.critica?` · <span style="color:#B3261E;font-weight:600">⚑ Control crítico</span>`:""}</div>
+      card.innerHTML = `${prevBox(pv)}<div class="small muted" style="margin-bottom:4px">${p.id}${p.critica?` · <span style="color:#B3261E;font-weight:600">⚑ Control crítico</span>`:""}</div>
         <div style="font-weight:500;margin-bottom:10px">${esc(p.t)}</div>
         <div class="op-opts"></div>
         <div class="chip-grid" style="margin-top:10px">
@@ -4774,7 +4916,8 @@ function renderOpWizard(){
   document.getElementById("op-jump").onclick = async ()=>{
     const res = opCalcular(ev.respuestas);
     const opciones = OP_AREAS.map((x,i)=>({i, label:`${i+1}. ${x.nombre}${res.areas[i].pendientes?` (faltan ${res.areas[i].pendientes})`:" ✓"}`}));
-    opciones.push({i:totalAreas, label:`${total}. Datos económicos (opcional)`});
+    opciones.push({i:totalAreas, label:`${totalAreas+1}. Evaluación del equipo`});
+    opciones.push({i:totalAreas+1, label:`${total}. Datos económicos (opcional)`});
     const c = await askChoice("Ir a", opciones, o=>o.label);
     if(!c) return; ev.areaIdx = c.i; opGuardarBorrador(ev); go("op-wizard");
   };
@@ -4822,6 +4965,18 @@ function renderOpResultado(){
       <div class="card"><div class="section-title">Impacto económico · ESTIMADO</div>
         ${res.economico.length ? res.economico.map(x=>`<div class="small-row" style="display:block"><b>${esc(x.t)}:</b> ${esc(x.v)}<div class="muted small">${esc(x.s)}</div></div>`).join("") : `<div class="muted small">No se capturaron datos económicos. <a href="#" id="op-go-eco">Capturarlos</a></div>`}
       </div>
+      ${(()=>{ const eq = ev.respuestas.__equipo; if(!eq || !(eq.colaboradores||[]).length) return `<div class="card"><div class="section-title">Evaluación del equipo</div><div class="muted small">Sin colaboradores registrados.</div><button class="btn btn-ghost" id="op-go-eq" style="margin-top:8px">Evaluar al equipo</button></div>`;
+        const r = eqCalcular(eq, ev.respuestas.__eco);
+        return `<div class="card"><div class="section-title">Evaluación del equipo (${eq.colaboradores.length})</div>
+          <div class="small-row"><span>Costo del equipo interno</span><b>${opMoney(r.costoInterno)}</b></div>
+          <div class="small-row"><span>Servicios externos</span><b>${opMoney(r.costoExterno)}</b></div>
+          ${r.pctVenta!==null?`<div class="small-row"><span>Equipo / venta</span><b>${r.pctVenta}%</b></div>`:""}
+          <div class="small-row"><span>Personas con datos faltantes</span><b>${r.faltantes.length}</b></div>
+          ${r.acciones.slice(0,4).map(t=>`<div class="small-row" style="display:block;font-size:13.5px">${esc(t)}</div>`).join("")}
+          <button class="btn btn-ghost" id="op-go-eq" style="margin-top:8px">Ver o editar evaluación</button></div>`; })()}
+      ${(()=>{ const P = ev.respuestas.__previas; if(!P) return ""; const est = Object.entries(P).map(([k,v])=>{ const r = ev.respuestas[k]||{}; const resp = !!(r.nivel||r.na||(r.dato||"").trim()); return {k, e:v.estado, resp}; });
+        const val = est.filter(x=>x.e==="validar" && !x.resp).length, res2 = est.filter(x=>x.e==="responder" && !x.resp).length;
+        return `<div class="card"><div class="section-title">Levantamiento previo</div><div class="small-row"><span>Por validar</span><b style="color:#B8860B">${val}</b></div><div class="small-row"><span>Por responder</span><b style="color:#B3261E">${res2}</b></div>${(val+res2)?`<p class="muted small" style="margin:6px 0 0">Mientras haya pendientes, el diagnóstico es preliminar.</p>`:""}<button class="btn btn-ghost" id="op-go-lev" style="margin-top:8px">Ver levantamiento</button></div>`; })()}
       <div id="op-save-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
       ${ev.estatus!=="completada" ? `<button class="action-btn" id="op-complete"><span>✓ Marcar como completado</span><span>→</span></button>` : ""}
       <button class="action-btn" id="op-pdf" style="background:var(--navy-800)"><span>📄 Generar PDF</span><span>→</span></button>
@@ -4830,7 +4985,9 @@ function renderOpResultado(){
   document.getElementById("btn-back").onclick = () => go("expediente", {currentExpediente:{id:ev.expediente_id, nombre_expediente:ev.expediente_nombre}});
   document.querySelectorAll(".op-bar-row").forEach(r=> r.onclick = ()=>{ ev.areaIdx = +r.dataset.i; go("op-wizard"); });
   document.getElementById("op-edit").onclick = ()=>{ ev.areaIdx = 0; go("op-wizard"); };
-  const ge = document.getElementById("op-go-eco"); if(ge) ge.onclick = (e)=>{ e.preventDefault(); ev.areaIdx = OP_AREAS.length; go("op-wizard"); };
+  const ge = document.getElementById("op-go-eco"); if(ge) ge.onclick = (e)=>{ e.preventDefault(); ev.areaIdx = OP_AREAS.length + 1; go("op-wizard"); };
+  const ge2 = document.getElementById("op-go-eq"); if(ge2) ge2.onclick = ()=>{ ev.areaIdx = OP_AREAS.length; go("op-wizard"); };
+  const gl = document.getElementById("op-go-lev"); if(gl) gl.onclick = ()=> verLevantamiento(ev);
   const bc = document.getElementById("op-complete");
   if(bc) bc.onclick = async ()=>{
     if(res.pendientes){ const c = await askChoice(`Faltan ${res.pendientes} pregunta(s). ¿Completar de todos modos?`, [{v:1,label:"Sí, completar"},{v:0,label:"Volver a capturar"}], o=>o.label); if(!c||!c.v) return; }
@@ -4978,6 +5135,41 @@ async function generarPdfOperativo(ev, res){
     });
   } else {
     body("No se capturaron datos económicos en esta visita, por lo que no se estima impacto en dinero. Con venta mensual, ticket promedio, citas, inasistencias, pacientes nuevos y gasto en publicidad, el reporte calcula cuánto está expuesto.", {size:10.5, color:SOFT});
+  }
+
+  // ---------- Evaluación del equipo (módulo global) ----------
+  const EQ = ev.respuestas.__equipo;
+  if(EQ && (EQ.colaboradores||[]).length){
+    const er = eqCalcular(EQ, ev.respuestas.__eco);
+    doc.addPage(); y = margin;
+    heading("Evaluación del equipo");
+    body("Productividad (trabajo y uso de capacidad), contribución (aporte directo o indirecto) y rentabilidad (solo con ingresos atribuibles y costo). Los montos son DECLARADOS salvo que se indique verificado; los indicadores son CÁLCULOS o ESTIMACIONES con los datos capturados.", {size:9.5, color:SOFT, lh:13});
+    y += 4;
+    body(`Costo del equipo interno (declarado): ${opMoney(er.costoInterno)} al mes · Servicios externos: ${opMoney(er.costoExterno)} al mes${er.pctVenta!==null?` · Equipo interno / venta: ${er.pctVenta}%`:""}`, {bold:true, size:10.5});
+    y += 6;
+    er.personas.forEach(pp=>{
+      checkBreak(70);
+      body(`${pp.c.nombre} · ${pp.tipo.label}${pp.c.relacion?` · ${pp.c.relacion}`:""}`, {bold:true, size:11, color:NAVY});
+      const lin = [];
+      if(pp.c.funcion) lin.push(`Función declarada: ${pp.c.funcion}`);
+      lin.push(`Costo mensual: ${pp.pago!==null?opMoney(pp.pago)+(pp.c.pagoVerificado?" (verificado)":" (declarado)"):"sin dato"}`);
+      if(pp.m.ocupacion!=null) lin.push(`Ocupación estimada: ${pp.m.ocupacion}%`);
+      if(pp.m.costoUnidad!=null) lin.push(`Costo por unidad de trabajo: ${opMoney(pp.m.costoUnidad)}`);
+      if(pp.m.contribucion!=null) lin.push(`Contribución estimada: ${opMoney(pp.m.contribucion)} al mes`);
+      ["cumplimiento","calidad","autonomia"].forEach(k=>{ if(pp.c[k]) lin.push(`${EQ_FALTA_LBL[k].charAt(0).toUpperCase()+EQ_FALTA_LBL[k].slice(1)}: ${EQ_ESC[+pp.c[k]]}`); });
+      if((pp.c.requiereDueno||"").trim()) lin.push(`Requiere al dueño en: ${pp.c.requiereDueno}`);
+      lin.forEach(t=>body(t, {size:10, lh:13, indent:8}));
+      body(pp.lectura, {size:10, lh:13, indent:8, color:SOFT});
+      if(pp.falta.length) body(`Información faltante: ${pp.falta.join(", ")}.`, {size:9.5, lh:12, indent:8, color:[184,134,11]});
+      y += 6;
+    });
+    if(er.acciones.length){ heading("Acciones sobre el equipo", 12); er.acciones.forEach(t=>body("•  "+t, {size:10.5, lh:14})); }
+    y += 6;
+  }
+  const PREVS = ev.respuestas.__previas;
+  if(PREVS){
+    const pend = Object.entries(PREVS).filter(([k,v])=>{ const r = ev.respuestas[k]||{}; return ["validar","responder"].includes(v.estado) && !(r.nivel||r.na||(r.dato||"").trim()); }).length;
+    if(pend){ checkBreak(50); body(`DIAGNÓSTICO PRELIMINAR: quedan ${pend} punto(s) del levantamiento por validar o responder. Las conclusiones pueden cambiar al completarlos.`, {bold:true, size:10.5, color:RED}); y += 6; }
   }
 
   // ---------- Detalle ----------
