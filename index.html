@@ -907,17 +907,20 @@ async function renderHallazgosLibresList(evaluacionId){
    el hallazgo aparece agrupado ahí en el reporte en lugar de "Hallazgos de visita". */
 const HL_AREAS = ["Autorizaciones sanitarias","Personal y documentación profesional","Equipamiento y dispositivos médicos","Insumos y medicamentos","RPBI","Expediente clínico","Publicidad sanitaria","Condiciones generales del establecimiento","Limpieza e higiene","Protección civil","Seguridad del personal"];
 const HL_MOTIVOS = [
-  {m:"Sin registro sanitario", d:"no cuenta con registro sanitario visible o comprobable", a:"Solicitar al proveedor el número de registro sanitario y conservar copia; si no lo tiene, suspender su uso hasta regularizarlo.", i:4, p:3},
+  {m:"Equipo o producto sin registro sanitario", d:"no cuenta con registro sanitario visible o comprobable", a:"Solicitar al proveedor el número de registro sanitario y conservar copia; si no lo tiene, suspender su uso hasta regularizarlo.", i:4, p:3},
+  {m:"Procedimiento sin aviso o sin licencia", d:"se realiza sin estar declarado en el aviso de funcionamiento o sin la licencia sanitaria que requiere", a:"Suspender el procedimiento y retirarlo de la publicidad hasta confirmar si requiere licencia sanitaria; en su caso, tramitarla y actualizar el aviso de funcionamiento con la actividad.", i:4, p:3},
   {m:"Sin mantenimiento vigente", d:"no tiene mantenimiento vigente documentado", a:"Programar mantenimiento con proveedor calificado y conservar la constancia y la bitácora.", i:3, p:3},
   {m:"Sin manual o bitácora", d:"no tiene manual de operación o bitácora de uso", a:"Integrar el manual de operación y una bitácora de uso y mantenimiento.", i:2, p:3},
   {m:"Caducado o vencido", d:"está caducado o vencido", a:"Retirarlo de uso de inmediato y desecharlo conforme a su tipo; revisar caducidades periódicamente.", i:4, p:3},
-  {m:"Falta documento o comprobante", d:"no cuenta con el documento o comprobante correspondiente", a:"Obtener el documento y conservarlo disponible para la autoridad.", i:3, p:3},
+  {m:"Falta documento o comprobante", d:"no cuenta con [especifica qué documento]", a:"Obtener [especifica qué documento] y conservarlo disponible para la autoridad.", i:3, p:3},
   {m:"Dañado o en mal estado", d:"está dañado o en mal estado", a:"Reparar o sustituir antes de seguir usándolo.", i:3, p:3},
   {m:"Mal almacenado", d:"está almacenado de forma inadecuada", a:"Reubicar y almacenar conforme a las indicaciones del fabricante y separado por tipo.", i:3, p:2},
   {m:"Falta señalización o rótulo", d:"carece de señalización o rótulo visible", a:"Colocar la señalización o rótulo visible.", i:2, p:3},
   {m:"Limpieza deficiente", d:"presenta limpieza deficiente", a:"Corregir la limpieza y definir una rutina con responsable y registro.", i:3, p:3},
   {m:"Otro", d:"", a:"", i:2, p:2},
 ];
+const HL_IMP_TXT = {1:"Bajo", 2:"Medio", 3:"Alto", 4:"Grave"};
+const HL_PROB_TXT = {1:"Poco probable", 2:"Posible", 3:"Probable", 4:"Casi seguro"};
 function openHallazgoLibreForm(existing, prefill){
   prefill = prefill || {};
   return new Promise((resolve)=>{
@@ -937,10 +940,11 @@ function openHallazgoLibreForm(existing, prefill){
       <textarea data-f="descripcion" placeholder='Ej. "El extintor está bloqueado por mobiliario"'>${esc(existing?.descripcion||prefill.descripcion||"")}</textarea>
       <label>Ubicación</label>
       <input type="text" data-f="ubicacion" value="${esc(existing?.ubicacion||"")}" placeholder="Ej. Pasillo, cabina 2">
-      <label>Impacto (1-4)</label>
-      <div class="chip-grid" id="hl-impacto">${[1,2,3,4].map(n=>`<div class="chip ${impactoVal===n?'selected':''}" data-n="${n}">${n}</div>`).join("")}</div>
-      <label>Probabilidad (1-4)</label>
-      <div class="chip-grid" id="hl-prob">${[1,2,3,4].map(n=>`<div class="chip ${probVal===n?'selected':''}" data-n="${n}">${n}</div>`).join("")}</div>
+      <label>¿Qué tan grave es si la autoridad lo encuentra?</label>
+      <div class="chip-grid" id="hl-impacto">${[1,2,3,4].map(n=>`<div class="chip ${impactoVal===n?'selected':''}" data-n="${n}">${HL_IMP_TXT[n]}</div>`).join("")}</div>
+      <label>¿Qué tan probable es que lo detecten o que pase?</label>
+      <div class="chip-grid" id="hl-prob">${[1,2,3,4].map(n=>`<div class="chip ${probVal===n?'selected':''}" data-n="${n}">${HL_PROB_TXT[n]}</div>`).join("")}</div>
+      <div class="small" id="hl-prio" style="margin-top:8px;font-weight:600"></div>
       <label>Fundamento legal (opcional -- solo si de verdad existe uno)</label>
       <textarea data-f="fundamento" placeholder="Déjalo vacío si no hay fundamento normativo confirmado">${esc(existing?.fundamento||"")}</textarea>
       <label>Acción correctiva</label>
@@ -984,15 +988,19 @@ function openHallazgoLibreForm(existing, prefill){
       if(mo.d) desc.value = (obj ? obj + " " : "El elemento revisado ") + mo.d + ".";
       else if(obj && !desc.value) desc.value = obj + ": ";
       if(mo.a) acc.value = mo.a;
-      impSel = mo.i; probSel = mo.p; setChips("#hl-impacto", impSel); setChips("#hl-prob", probSel);
+      impSel = mo.i; probSel = mo.p; setChips("#hl-impacto", impSel); setChips("#hl-prob", probSel); pintaPrio();
       const ub = sheet.querySelector('[data-f="ubicacion"]'); if(obj && !ub.value) ub.value = obj;
     });
-    sheet.querySelectorAll("#hl-impacto .chip").forEach(ch=>ch.onclick=()=>{ impSel=parseInt(ch.dataset.n,10); sheet.querySelectorAll("#hl-impacto .chip").forEach(x=>x.classList.remove("selected")); ch.classList.add("selected"); });
-    sheet.querySelectorAll("#hl-prob .chip").forEach(ch=>ch.onclick=()=>{ probSel=parseInt(ch.dataset.n,10); sheet.querySelectorAll("#hl-prob .chip").forEach(x=>x.classList.remove("selected")); ch.classList.add("selected"); });
+    const pintaPrio = () => { const p = computeManualPrioridad(impSel, probSel); const el = sheet.querySelector("#hl-prio"); if(el){ el.textContent = "Prioridad resultante: " + (PRIORITY_LABEL[p]||p); el.style.color = p==="CRITICA"?"#B3261E":p==="ALTA"?"#B8860B":"#4A4A44"; } };
+    sheet.querySelectorAll("#hl-impacto .chip").forEach(ch=>ch.onclick=()=>{ impSel=parseInt(ch.dataset.n,10); sheet.querySelectorAll("#hl-impacto .chip").forEach(x=>x.classList.remove("selected")); ch.classList.add("selected"); pintaPrio(); });
+    sheet.querySelectorAll("#hl-prob .chip").forEach(ch=>ch.onclick=()=>{ probSel=parseInt(ch.dataset.n,10); sheet.querySelectorAll("#hl-prob .chip").forEach(x=>x.classList.remove("selected")); ch.classList.add("selected"); pintaPrio(); });
+    pintaPrio();
     if(existing) renderEvidenceRow(sheet.querySelector("#evid-hl-"+existing.id), state.currentEvaluacion.id, "hallazgo_id", existing.id);
     sheet.querySelector("#m-ok").onclick = () => {
       const descripcion = sheet.querySelector('[data-f="descripcion"]').value.trim();
       if(!descripcion){ return; }
+      const accTxt = sheet.querySelector('[data-f="accion"]').value || "";
+      if(/\[especifica/i.test(descripcion+accTxt)){ alert("Escribe qué documento falta en lugar de [especifica qué documento]."); return; }
       const campos = {
         descripcion,
         ubicacion: sheet.querySelector('[data-f="ubicacion"]').value || null,
@@ -1098,28 +1106,41 @@ function computeDiagnostico(activos, respuestas, manualHallazgos){
     : percent>=41 ? {label:"Alto", color:"#B8860B"}
     : percent>=16 ? {label:"Moderado", color:"#C9A227"}
     : {label:"Bajo", color:"#2E7D4F"};
+  // El porcentaje se diluye cuando hay muchos criterios en orden; un punto crítico no puede
+  // quedar escondido. Piso de nivel: 1+ crítico → Alto; 3+ críticos → Crítico; 1+ alto → Moderado.
+  const nCrit = findings.filter(f=>f.risk.prioridad==="CRITICA").length;
+  const nAlta = findings.filter(f=>f.risk.prioridad==="ALTA").length;
+  const BAND_ORDER = ["Sin datos suficientes","Bajo","Moderado","Alto","Crítico"];
+  const BAND_DEF = {"Bajo":{label:"Bajo", color:"#2E7D4F"}, "Moderado":{label:"Moderado", color:"#C9A227"}, "Alto":{label:"Alto", color:"#B8860B"}, "Crítico":{label:"Crítico", color:"#B3261E"}};
+  const piso = nCrit>=3 ? "Crítico" : nCrit>=1 ? "Alto" : nAlta>=1 ? "Moderado" : null;
+  let bandNote = "";
+  if(piso && percent!==null && BAND_ORDER.indexOf(piso) > BAND_ORDER.indexOf(band.label)){
+    bandNote = `Nivel elevado a ${piso.toLowerCase()} porque hay ${nCrit ? nCrit+" punto(s) crítico(s)" : nAlta+" punto(s) de prioridad alta"}.`;
+    Object.assign(band, BAND_DEF[piso]);
+  }
 
   const porArea = {};
   activos.forEach(cr=>{
     const r = respuestas[cr.id];
     if(!r || !r.estatus) return;
-    porArea[cr.modulo] = porArea[cr.modulo] || {raw:0, denom:0};
+    porArea[cr.modulo] = porArea[cr.modulo] || {raw:0, denom:0, n:0, crit:0};
     porArea[cr.modulo].denom++;
   });
   manualHallazgos.forEach(h=>{
     const mod = h.categoria || "Hallazgos de visita";
-    porArea[mod] = porArea[mod] || {raw:0, denom:0};
+    porArea[mod] = porArea[mod] || {raw:0, denom:0, n:0, crit:0};
     porArea[mod].denom++;
   });
-  findings.forEach(f=>{ porArea[f.criterio.modulo].raw += PRIORITY_POINTS[f.risk.prioridad]||0; });
+  findings.forEach(f=>{ const pa = porArea[f.criterio.modulo]; if(!pa) return; pa.raw += PRIORITY_POINTS[f.risk.prioridad]||0; pa.n = (pa.n||0)+1; if(f.risk.prioridad==="CRITICA") pa.crit = (pa.crit||0)+1; });
   const areaRows = Object.keys(porArea).map(mod=>{
-    const {raw:r2, denom:d2} = porArea[mod];
+    const {raw:r2, denom:d2, n:nH, crit:nCr} = porArea[mod];
     const pct = d2>0 ? Math.round(100*r2/(d2*10)) : 0;
-    const color = pct>=71?"#B3261E":pct>=41?"#B8860B":pct>=16?"#C9A227":"#2E7D4F";
-    return {modulo:mod, percent:pct, color};
+    // Un área con un punto crítico nunca se pinta en verde ni amarillo.
+    const color = (pct>=71 || nCr>0) ? "#B3261E" : pct>=41 ? "#B8860B" : (pct>=16 || nH>0) ? "#C9A227" : "#2E7D4F";
+    return {modulo:mod, percent:pct, color, hallazgos:nH||0, criticos:nCr||0};
   }).sort((a,b)=>b.percent-a.percent);
 
-  return {findings, contestados, percent, band, areaRows};
+  return {findings, contestados, percent, band, bandNote, nCrit, nAlta, areaRows};
 }
 
 // Convierte una fila de evaluacion_criterios_snapshot (la fuente única de verdad
@@ -2252,15 +2273,15 @@ const CARPETAS_DEP = {
       {t:"Personal administrativo: identificación y función (no opera procedimientos)", siempre:true, rec:true},
       {t:"Relación del personal: nombre, puesto, función y horario", siempre:true, rec:true},
     ]},
-    {t:"Protocolos y formatos clínicos", p:"Cómo se atiende y cómo se documenta. Los expedientes de pacientes se archivan aparte, con acceso restringido.", items:[
+    {t:"Protocolos y formatos clínicos", p:"Cómo se atiende y cómo se documenta. Aquí van los protocolos, los formatos modelo y los registros del día a día. Los expedientes ya llenos de los pacientes NO van aquí: se archivan aparte, con acceso restringido.", items:[
       {t:"Manual de procedimientos: protocolo de cada tratamiento, metodología, insumos y productos", ids:["est-24","mb-02","hosp-09"], siempre:true},
-      {t:"Formatos de expediente clínico en blanco (historia clínica, notas) conforme a la NOM-004", ids:["m6-01","m6-02"], siempre:true},
-      {t:"Formatos de consentimiento informado por procedimiento", ids:["m6-03","dent-09","mb-07"], siempre:true},
+      {t:"Formatos modelo del expediente clínico en blanco: historia clínica y nota de evolución", ids:["m6-01","m6-02"], siempre:true, rec:true, n:"Muestran al verificador que la clínica documenta igual siempre. Tenerlos en blanco no es obligación; lo obligatorio es que los expedientes llenos cumplan la NOM-004."},
+      {t:"Formatos modelo de consentimiento informado, uno por procedimiento", ids:["m6-03","dent-09","mb-07"], siempre:true, rec:true, n:"El consentimiento firmado de cada paciente es obligatorio y va en su expediente; aquí va el modelo en blanco."},
       {t:"Odontograma y periodontograma", ids:["dent-08"]},
       {t:"Cuestionario previo al procedimiento", ids:["mb-06"]},
       {t:"Aviso de privacidad", siempre:true, n:"Obligatorio por la ley de protección de datos personales, no por COFEPRIS."},
       {t:"Muestra del recetario impreso con datos completos", ids:["cons-02","est-20"]},
-      {t:"Registro diario de pacientes", ids:["cons-01","est-17"], v:"Mantener al día"},
+      {t:"Registro diario de pacientes", ids:["cons-01","est-17"], v:"Mantener al día", n:"Va el registro real del día a día (libreta o sistema), no un formato en blanco."},
       {t:"Bitácora encuadernada y foliada de actividades y usuarios", ids:["mb-09"], v:"Conservar 2 años"},
       {t:"Certificado SIRES del sistema (si el expediente es electrónico)", ids:["est-21"], v:"Mantener vigente"},
       {t:"Lista de teléfonos de emergencia (copia; original a la vista)", ids:["dent-01"]},
@@ -3101,7 +3122,7 @@ async function renderResumenEvaluacion(){
   if(brandEl) brandEl.textContent = "VISITA EN CURSO · " + dep.label;
   state.currentDep = dep.codigo;
   getExpedienteRow(ev.expediente_id).then(row=>{ const t=document.getElementById("visit-title"); if(row && t) t.textContent = row.nombre_expediente; }).catch(()=>{});
-  const subEl = document.getElementById("visit-sub"); if(subEl) subEl.textContent = `Nivel ${ev.nivel_checkup} · Toca cualquier sección en cualquier orden`;
+  const subEl = document.getElementById("visit-sub"); if(subEl) subEl.textContent = dep.codigo==="cofepris" ? `Nivel ${ev.nivel_checkup} · Sigue la ruta en orden; puedes saltar entre etapas` : `Nivel ${ev.nivel_checkup} · Toca cualquier sección en cualquier orden`;
   const c = document.getElementById("res-content");
   if(snapRes.error){ c.innerHTML = `<div class="err">${esc(snapRes.error.message)}</div>`; return; }
   const fromCacheRes = snapRes.fromCache || respRes.fromCache;
@@ -3109,9 +3130,23 @@ async function renderResumenEvaluacion(){
   (respRes.data||[]).forEach(r => { respuestas[r.criterio_id] = r; });
 
   const activos = (snapRes.data||[]).map(snapshotRowToCriterio);
+  const RUTA = dep.codigo==="cofepris";
+  if(state._rutaEv !== ev.id){ state._rutaEv = ev.id; state.visitaEtapa = null; }
+  const etapa = RUTA ? (state.visitaEtapa||null) : null;
+  const idsPresentes = new Set(activos.map(a=>a.id));
+  const ocultos = new Set(RUTA ? Object.keys(RUTA_DUP).filter(sec=>idsPresentes.has(sec) && idsPresentes.has(RUTA_DUP[sec])) : []);
+  const extraFund = {};
+  ocultos.forEach(sec=>{ const pri = RUTA_DUP[sec]; const crs = activos.find(a=>a.id===sec); if(crs && crs.fundamento_legal) extraFund[pri] = (extraFund[pri]?extraFund[pri]+"; ":"") + crs.fundamento_legal; });
+  const activosVis = activos.filter(a=>!ocultos.has(a.id));
   const grouped = {};
-  activos.forEach(cr => { (grouped[cr.modulo] = grouped[cr.modulo]||[]).push(cr); });
-  const contestados = activos.filter(cr => respuestas[cr.id] && respuestas[cr.id].estatus).length;
+  if(!RUTA){
+    activos.forEach(cr => { (grouped[cr.modulo] = grouped[cr.modulo]||[]).push(cr); });
+  } else if(etapa){
+    activosVis.filter(cr=>rutaDeCriterio(cr.id).etapa===etapa)
+      .sort((a,b)=>RUTA_AREAS_ORDEN.indexOf(rutaDeCriterio(a.id).area)-RUTA_AREAS_ORDEN.indexOf(rutaDeCriterio(b.id).area))
+      .forEach(cr => { const ar = rutaDeCriterio(cr.id).area; (grouped[ar] = grouped[ar]||[]).push(cr); });
+  }
+  const contestados = activosVis.filter(cr => respuestas[cr.id] && respuestas[cr.id].estatus).length;
 
   // Publicidad (capturas) solo aplica si de verdad hay publicidad marcada en el wizard --
   // igual que el criterio regulatorio correspondiente, no le mostramos esto a quien no
@@ -3120,17 +3155,17 @@ async function renderResumenEvaluacion(){
   const seccionesPorNivel = INVENTORY_SECTIONS.filter(sec => sec.depth.includes(ev.nivel_checkup) && sec.areas.includes(dep.codigo));
   const seccionesVisibles = seccionesPorNivel.filter(sec => !["publicidad_captura","redes_perfil"].includes(sec.codigo) || hayPublicidad);
   const seccionesOmitidasPorNivel = INVENTORY_SECTIONS.filter(sec => !sec.depth.includes(ev.nivel_checkup));
-  const pctCriterios = activos.length ? Math.round(100*contestados/activos.length) : 0;
+  const pctCriterios = activosVis.length ? Math.round(100*contestados/activosVis.length) : 0;
 
   c.innerHTML = `
     ${fromCacheRes ? `<div class="empty-note" style="margin-bottom:14px">📴 Trabajando sin conexión con la última copia guardada de esta evaluación.</div>` : ""}
     <div class="card">
       <div class="summary-row"><span class="k">Nivel</span><span class="v">${esc(ev.nivel_checkup)}</span></div>
-      <div class="fc2-progress-row" style="margin-top:6px"><div class="fc2-progress-track"><div class="fc2-progress-fill" style="width:${pctCriterios}%" id="crit-progress-fill"></div></div><span class="muted small" id="contestados-count">${contestados} de ${activos.length}</span></div>
-      <p class="muted small" style="margin:4px 0 0">${activos.length} criterios aplicables${dep.codigo!=="cofepris"?" para este centro de trabajo":" para este tipo de establecimiento"}</p>
+      <div class="fc2-progress-row" style="margin-top:6px"><div class="fc2-progress-track"><div class="fc2-progress-fill" style="width:${pctCriterios}%" id="crit-progress-fill"></div></div><span class="muted small" id="contestados-count">${contestados} de ${activosVis.length}</span></div>
+      <p class="muted small" style="margin:4px 0 0">${activosVis.length} criterios aplicables${dep.codigo!=="cofepris"?" para este centro de trabajo":" para este tipo de establecimiento"}</p>
     </div>
     <div class="card" style="padding:4px 16px" id="visit-hub"></div>
-    <div class="hallazgos-box" id="hallazgos-anchor">
+    <div class="hallazgos-box" id="hallazgos-anchor" style="${RUTA && etapa && etapa!==6 ? "display:none" : ""}">
       <div class="section-title" style="margin-bottom:2px">🚩 Hallazgos de visita</div>
       <p class="muted small">Lo que ves en sitio y está mal. Usa la bandera 🚩 en cualquier momento, o "Marcar como hallazgo" dentro de cada registro del inventario.</p>
       <div id="hallazgos-libres-list"></div>
@@ -3171,8 +3206,9 @@ async function renderResumenEvaluacion(){
     row.onclick = onclick;
     hub.appendChild(row);
   };
-  hubRow("⚖️", "Evaluación regulatoria", `${contestados}/${activos.length} criterios registrados`, scrollToCriterios);
-  seccionesVisibles.forEach(sec=>{
+  const nRegHallAll = activosVis.filter(cr => respuestas[cr.id] && ["no_cumple","parcial","pendiente","no_verificado"].includes(respuestas[cr.id].estatus)).length;
+  const nHallAll = nRegHallAll + (libresRes.data||[]).length;
+  const seccionRow = (sec) => {
     if(sec.kind==="collection"){
       const schema = COLLECTION_SCHEMAS[sec.codigo]; const n = collByTipo[ids["c:"+sec.codigo]] || 0;
       hubRow(schema.icon, schema.label, `${n} registrado${n===1?"":"s"}`, () => openColeccionList(ev.id, sec.codigo));
@@ -3180,16 +3216,66 @@ async function renderResumenEvaluacion(){
       const schema = SINGLE_SCHEMAS[sec.codigo]; const has = singleSet.has(ids["r:"+sec.codigo]);
       hubRow(schema.icon, schema.label, has?"Registrado":"Sin registrar", () => openRegistroUnico(ev.id, sec.codigo));
     }
-  });
-  const nRegHall = activos.filter(cr => respuestas[cr.id] && ["no_cumple","parcial","pendiente","no_verificado"].includes(respuestas[cr.id].estatus)).length;
-  const nHall = nRegHall + (libresRes.data||[]).length;
-  hubRow("🚩", "Hallazgos", `${nHall} hallazgo${nHall===1?"":"s"}`, () => document.getElementById("hallazgos-anchor")?.scrollIntoView({behavior:"smooth", block:"start"}), nHall>0);
-  if(dep.codigo==="cofepris" && ev.nivel_checkup!=="basico"){
-    const nExp = await expaCargar(ev.id).then(r=>((r&&r.campos&&r.campos.expedientes)||[]).length).catch(()=>0);
-    hubRow("📁", "Auditoría de expedientes", nExp ? `${nExp} revisado${nExp===1?"":"s"}` : "Revisa una muestra de 3 a 5 expedientes", () => go("exp-audit", {currentEvaluacion: ev}));
+  };
+  const irEtapa = (n) => { state.visitaEtapa = n; renderResumenEvaluacion().then(()=>window.scrollTo(0,0)); };
+  const filaAuditoria = async () => {
+    if(dep.codigo==="cofepris" && ev.nivel_checkup!=="basico"){
+      const nExp = await expaCargar(ev.id).then(r=>((r&&r.campos&&r.campos.expedientes)||[]).length).catch(()=>0);
+      hubRow("📁", "Auditoría de expedientes", nExp ? `${nExp} revisado${nExp===1?"":"s"}` : "Revisa una muestra de 3 a 5 expedientes", () => go("exp-audit", {currentEvaluacion: ev}));
+    }
+  };
+  const filaDiagnostico = () => {
+    if(!esAdmin()) hubRow("🧾", "Diagnóstico", ev.revision_estado==="por_revisar" ? "Enviada a revisión" : "Revisa y envía a revisión", () => go("diagnostico-evaluacion", {currentEvaluacion: ev}));
+    else hubRow("🧾", "Diagnóstico / PDF", contestados ? "Ver diagnóstico y generar PDF" : "Generar cuando termines el levantamiento", () => go("diagnostico-evaluacion", {currentEvaluacion: ev}));
+  };
+  if(RUTA && !etapa){
+    RUTA_ETAPAS.forEach(E=>{
+      const crsE = activosVis.filter(cr=>rutaDeCriterio(cr.id).etapa===E.n);
+      const hechos = crsE.filter(cr=>respuestas[cr.id] && respuestas[cr.id].estatus).length;
+      const secsE = seccionesVisibles.filter(sec=>(RUTA_SECCIONES[sec.codigo]||[])[0]===E.n);
+      let sub = E.sub;
+      if(crsE.length) sub = `${hechos}/${crsE.length} puntos revisados` + (secsE.length ? ` · ${secsE.length} registro${secsE.length===1?"":"s"} de inventario` : "");
+      if(E.n===6) sub = `${nHallAll} hallazgo${nHallAll===1?"":"s"} · diagnóstico y PDF`;
+      if(E.n===1) sub = "Guía para el personal · no se califica";
+      hubRow(E.icon, `${E.n}. ${E.nombre}`, sub, () => irEtapa(E.n), E.n===6 && nHallAll>0);
+    });
+  } else if(RUTA && etapa){
+    const E = RUTA_ETAPAS.find(x=>x.n===etapa);
+    const head = document.createElement("div");
+    head.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:12px 0 8px"><button class="btn btn-ghost" id="ruta-back" style="width:auto;padding:6px 12px;margin:0">← Ruta</button><div style="font-weight:700;color:var(--navy-900)">${E.icon} ${E.n}. ${esc(E.nombre)}</div></div>`;
+    hub.appendChild(head);
+    head.querySelector("#ruta-back").onclick = () => irEtapa(null);
+    if(etapa===1){ const p = document.createElement("div"); p.style.padding = "4px 0 14px"; p.innerHTML = RUTA_PROTOCOLO; hub.appendChild(p); }
+    seccionesVisibles.filter(sec=>(RUTA_SECCIONES[sec.codigo]||[])[0]===etapa).forEach(seccionRow);
+    if(etapa===5) await filaAuditoria();
+    if(etapa===6){
+      hubRow("🚩", "Hallazgos", `${nHallAll} hallazgo${nHallAll===1?"":"s"}`, () => document.getElementById("hallazgos-anchor")?.scrollIntoView({behavior:"smooth", block:"start"}), nHallAll>0);
+      await filaAuditoria();
+      filaDiagnostico();
+    }
+    const otrasSecciones = etapa===3 ? seccionesVisibles.filter(sec=>!RUTA_SECCIONES[sec.codigo]) : [];
+    otrasSecciones.forEach(seccionRow);
+  } else {
+    hubRow("⚖️", "Evaluación regulatoria", `${contestados}/${activos.length} criterios registrados`, scrollToCriterios);
+    seccionesVisibles.forEach(sec=>{
+      if(sec.kind==="collection"){
+        const schema = COLLECTION_SCHEMAS[sec.codigo]; const n = collByTipo[ids["c:"+sec.codigo]] || 0;
+        hubRow(schema.icon, schema.label, `${n} registrado${n===1?"":"s"}`, () => openColeccionList(ev.id, sec.codigo));
+      } else {
+        const schema = SINGLE_SCHEMAS[sec.codigo]; const has = singleSet.has(ids["r:"+sec.codigo]);
+        hubRow(schema.icon, schema.label, has?"Registrado":"Sin registrar", () => openRegistroUnico(ev.id, sec.codigo));
+      }
+    });
+    const nRegHall = activos.filter(cr => respuestas[cr.id] && ["no_cumple","parcial","pendiente","no_verificado"].includes(respuestas[cr.id].estatus)).length;
+    const nHall = nRegHall + (libresRes.data||[]).length;
+    hubRow("🚩", "Hallazgos", `${nHall} hallazgo${nHall===1?"":"s"}`, () => document.getElementById("hallazgos-anchor")?.scrollIntoView({behavior:"smooth", block:"start"}), nHall>0);
+    if(dep.codigo==="cofepris" && ev.nivel_checkup!=="basico"){
+      const nExp = await expaCargar(ev.id).then(r=>((r&&r.campos&&r.campos.expedientes)||[]).length).catch(()=>0);
+      hubRow("📁", "Auditoría de expedientes", nExp ? `${nExp} revisado${nExp===1?"":"s"}` : "Revisa una muestra de 3 a 5 expedientes", () => go("exp-audit", {currentEvaluacion: ev}));
+    }
+    if(!esAdmin()) hubRow("🧾", "Diagnóstico", ev.revision_estado==="por_revisar" ? "Enviada a revisión" : "Revisa y envía a revisión", () => go("diagnostico-evaluacion", {currentEvaluacion: ev}));
+    else hubRow("🧾", "Diagnóstico / PDF", contestados ? "Ver diagnóstico y generar PDF" : "Generar cuando termines el levantamiento", () => go("diagnostico-evaluacion", {currentEvaluacion: ev}));
   }
-  if(!esAdmin()) hubRow("🧾", "Diagnóstico", ev.revision_estado==="por_revisar" ? "Enviada a revisión" : "Revisa y envía a revisión", () => go("diagnostico-evaluacion", {currentEvaluacion: ev}));
-  else hubRow("🧾", "Diagnóstico / PDF", contestados ? "Ver diagnóstico y generar PDF" : "Generar cuando termines el levantamiento", () => go("diagnostico-evaluacion", {currentEvaluacion: ev}));
   const groupsEl = document.getElementById("crit-groups");
   if(activos.length===0){
     groupsEl.innerHTML = `<div class="empty-note">Ningún criterio de los 6 módulos validados aplica con estos datos.</div>`;
@@ -3209,15 +3295,17 @@ async function renderResumenEvaluacion(){
       div.className = "crit-card";
       div.innerHTML = `
         <div class="crit-top">
-          <div class="crit-req">${esc(cr.requisito)}</div>
+          <div class="crit-req">${esc(cr.requisito)} <button class="help-q" data-help="${cr.id}" title="¿Qué es esto?" style="border:1px solid var(--line,#ddd);background:#fff;border-radius:50%;width:24px;height:24px;font-weight:700;color:var(--navy-900);cursor:pointer;vertical-align:middle;margin-left:4px">?</button></div>
           <div class="crit-tag ${tag.cls}">${tag.label}</div>
         </div>
-        <div class="crit-meta"><b>Fundamento:</b> ${esc(cr.fundamento_legal||"—")}</div>
+        <div class="crit-meta"><b>Fundamento:</b> ${esc(cr.fundamento_legal||"—")}${extraFund[cr.id] ? `<br><span style="opacity:.85">También cubre: ${esc(extraFund[cr.id])}</span>` : ""}</div>
         ${cr.runtimeUncertain ? `<div class="crit-meta" style="color:#2F6FA8">Aplicabilidad no determinada — confirma en sitio.</div>` : ""}
         <div class="status-grid">
           ${STATUS_OPTS.map(([v,l])=>`<div class="status-opt ${resp.estatus===v?'sel-'+v:''}" data-crit="${cr.id}" data-v="${v}">${l}</div>`).join("")}
         </div>
-        <textarea class="crit-note" placeholder="Nota del evaluador (opcional)" data-crit-note="${cr.id}">${esc(resp.nota||"")}</textarea>
+        <div class="crit-hl" id="crithl-${cr.id}">${critHallazgoBadge(cr, resp.estatus)}</div>
+        <textarea class="crit-note" placeholder="${HL_ESTATUS.includes(resp.estatus) ? "Tu observación del hallazgo (sale en el reporte)" : "Nota del evaluador (opcional)"}" data-crit-note="${cr.id}">${esc(resp.nota||"")}</textarea>
+        ${/aviso de publicidad|permiso de publicidad|permiso o aviso de publicidad/i.test(cr.requisito||"") ? `<button class="btn btn-ghost pub-quiz-btn" data-pubquiz="${cr.id}" style="width:100%;margin:8px 0 0">🧭 ¿Aviso o permiso? Resolver con 4 preguntas</button>` : ""}
         <div class="save-tick" id="tick-${cr.id}"></div>
         <div class="evid-row" id="evid-${cr.id}"></div>
       `;
@@ -3225,6 +3313,17 @@ async function renderResumenEvaluacion(){
     });
     groupsEl.appendChild(card);
   });
+  if(RUTA && etapa){
+    if(!Object.keys(grouped).length && etapa!==1 && etapa!==6){
+      groupsEl.insertAdjacentHTML("afterbegin", `<div class="empty-note">En esta visita no hay criterios de esta etapa; revisa los registros de arriba.</div>`);
+    }
+    const nav = document.createElement("div");
+    nav.style.cssText = "display:flex;gap:8px;margin:14px 0 30px";
+    nav.innerHTML = `${etapa>1?`<button class="btn btn-ghost" id="ruta-prev" style="flex:1">← Etapa ${etapa-1}</button>`:""}${etapa<6?`<button class="btn btn-primary" id="ruta-next" style="flex:1">Siguiente: ${esc(RUTA_ETAPAS[etapa].nombre)} →</button>`:""}`;
+    groupsEl.appendChild(nav);
+    const pv = nav.querySelector("#ruta-prev"); if(pv) pv.onclick = () => irEtapa(etapa-1);
+    const nx = nav.querySelector("#ruta-next"); if(nx) nx.onclick = () => irEtapa(etapa+1);
+  }
 
   // Evidencia por criterio: si ya existe respuesta se usa su id directo; si no,
   // el widget la crea (sin estatus) en cuanto se sube la primera foto.
@@ -3253,7 +3352,7 @@ async function renderResumenEvaluacion(){
   const contestadosSet = new Set(Object.keys(respuestas).filter(k=>respuestas[k].estatus));
   function refreshContestadosCount(){
     const el = document.getElementById("contestados-count");
-    if(el) el.textContent = `${contestadosSet.size} de ${activos.length}`;
+    if(el) el.textContent = `${[...contestadosSet].filter(id=>!ocultos.has(id)).length} de ${activosVis.length}`;
   }
   groupsEl.querySelectorAll(".status-opt").forEach(opt=>{
     opt.onclick = async () => {
@@ -3262,6 +3361,12 @@ async function renderResumenEvaluacion(){
       opt.classList.add("sel-"+v);
       contestadosSet.add(critId);
       refreshContestadosCount();
+      const crObj = activos.find(x=>x.id===critId);
+      const hlEl = document.getElementById("crithl-"+critId);
+      if(hlEl && crObj) hlEl.innerHTML = critHallazgoBadge(crObj, v);
+      const noteEl = groupsEl.querySelector(`[data-crit-note="${critId}"]`);
+      if(noteEl) noteEl.placeholder = HL_ESTATUS.includes(v) ? "Tu observación del hallazgo (sale en el reporte)" : "Nota del evaluador (opcional)";
+      respuestas[critId] = Object.assign(respuestas[critId]||{}, {estatus:v});
       await guardarRespuesta(ev.id, critId, {estatus:v});
     };
   });
@@ -3270,6 +3375,156 @@ async function renderResumenEvaluacion(){
       await guardarRespuesta(ev.id, ta.dataset.critNote, {nota: ta.value});
     });
   });
+  groupsEl.querySelectorAll("[data-help]").forEach(b=>{
+    b.onclick = (e) => { e.stopPropagation(); const crH = activos.find(x=>x.id===b.dataset.help); if(crH) rutaAyudaCriterio(crH); };
+  });
+  groupsEl.querySelectorAll("[data-pubquiz]").forEach(btn=>{
+    btn.onclick = async () => {
+      const res = await openPublicidadQuiz();
+      if(!res) return;
+      const critId = btn.dataset.pubquiz;
+      const ta = groupsEl.querySelector(`[data-crit-note="${critId}"]`);
+      const previo = (ta.value||"").replace(/\[Cuestionario de publicidad\][\s\S]*?\[fin\]\s*/,"");
+      ta.value = `[Cuestionario de publicidad] ${res.resumen} [fin]\n` + previo;
+      await guardarRespuesta(ev.id, critId, {nota: ta.value});
+    };
+  });
+}
+
+/* Aviso vs permiso de publicidad (RLGSMP arts. 19, 63, 79, 86, 87; LGS 83 y 272 Bis 2).
+   Determina el trámite por lo que se anuncia, no por ser persona física o moral. */
+function openPublicidadQuiz(){
+  return new Promise((resolve)=>{
+    const Q = [
+      {k:"anuncia", t:"1. ¿La clínica o el médico anuncian sus servicios?", h:"Redes sociales, página web, Google, volantes, espectaculares, anuncios pagados o con influencers.", o:[["si","Sí"],["no","No"]]},
+      {k:"embellece", t:"2. ¿Anuncian tratamientos para cambiar la apariencia?", h:"Aparatología corporal o facial, depilación, faciales, toxina, rellenos, peelings, moldeado, etc. El Reglamento los llama servicios de embellecimiento (art. 63).", o:[["si","Sí"],["no","No"]]},
+      {k:"quien", t:"3. ¿Quién aparece como el que ofrece el servicio?", h:"Lo que importa es lo que se ve en el anuncio.", o:[["individual","Un profesional, con su nombre, ofreciendo su propia consulta"],["clinica","Una clínica, una marca o varios profesionales"]]},
+      {k:"cirugia", t:"4. ¿Anuncian cirugía plástica o estética?", h:"Liposucción, rinoplastia, bichectomía, implantes, abdominoplastia, etc.", o:[["si","Sí"],["no","No"]]},
+    ];
+    const ans = {};
+    const sheet = openModal(`<h3>¿Aviso o permiso de publicidad?</h3><div id="pq-body"></div>
+      <button class="btn btn-ghost" id="pq-cancel" style="width:100%;margin-top:8px">Cancelar</button>`);
+    const body = sheet.querySelector("#pq-body");
+    sheet.querySelector("#pq-cancel").onclick = ()=>{ closeModal(); resolve(null); };
+    const resultado = () => {
+      if(ans.anuncia==="no") return {tramite:"Ninguno", txt:"No hace publicidad: no aplica aviso ni permiso. Si empieza a anunciarse, se vuelve a revisar.", fund:"RLGSMP arts. 79 y 86."};
+      const r = {};
+      if(ans.embellece==="si" || ans.quien==="clinica"){
+        r.tramite = "Permiso de publicidad";
+        r.txt = ans.embellece==="si"
+          ? (ans.quien==="individual"
+              ? "Anuncia tratamientos de embellecimiento. Aunque lo anuncie un solo médico, el art. 79 fr. VI los sujeta a permiso. Criterio sujeto a revisión: hay quien lo trata como aviso del profesional (art. 86 fr. I); lo prudente es tramitar permiso."
+              : "Anuncia una clínica o marca y tratamientos de embellecimiento: requiere permiso (art. 79 fr. I y VI). Trámite COFEPRIS-02-001, modalidad A, con pago de derechos.")
+          : "Anuncia una clínica, marca o varios profesionales: requiere permiso (art. 79 fr. I). Trámite COFEPRIS-02-001, modalidad A, con pago de derechos.";
+        r.fund = "RLGSMP arts. 63 a 65 y 79 fr. I y VI.";
+      } else {
+        r.tramite = "Aviso de publicidad";
+        r.txt = "Un profesional que anuncia su propia consulta: presenta aviso (COFEPRIS-02-002-A), gratuito, en DIGIPRiS, dentro de los 5 días anteriores a difundir el anuncio.";
+        r.fund = "RLGSMP arts. 86 fr. I y 87.";
+      }
+      r.txt += " En todo anuncio: institución que expidió el título y número de cédula profesional (RLGSMP art. 19; LGS art. 83).";
+      if(ans.cirugia==="si") r.txt += " Por anunciar cirugía plástica o estética, cada anuncio debe llevar además la cédula de especialista y el certificado vigente del consejo de la especialidad (LGS art. 272 Bis 2).";
+      return r;
+    };
+    const paso = (i) => {
+      if(i===1 && ans.anuncia==="no") return fin();
+      if(i>=Q.length) return fin();
+      const q = Q[i];
+      body.innerHTML = `<div style="font-weight:700;margin:6px 0">${esc(q.t)}</div><p class="muted small" style="margin:0 0 10px">${esc(q.h)}</p>` +
+        q.o.map(([v,l])=>`<button class="btn btn-ghost" data-v="${v}" style="display:block;width:100%;text-align:left;margin-bottom:8px">${esc(l)}</button>`).join("");
+      body.querySelectorAll("[data-v]").forEach(b=>b.onclick=()=>{ ans[q.k]=b.dataset.v; paso(i+1); });
+    };
+    const fin = () => {
+      const r = resultado();
+      body.innerHTML = `<div class="crit-tag tag-condicionado" style="display:inline-block;margin:6px 0">${esc(r.tramite)}</div>
+        <p style="line-height:1.45;margin:8px 0">${esc(r.txt)}</p><p class="muted small">Fundamento: ${esc(r.fund)}</p>
+        <button class="btn btn-primary" id="pq-ok" style="width:100%;margin-top:10px">Guardar en la nota del criterio</button>`;
+      body.querySelector("#pq-ok").onclick = ()=>{ closeModal(); resolve({...r, resumen:`${r.tramite}. ${r.txt} Fundamento: ${r.fund}`}); };
+    };
+    paso(0);
+  });
+}
+
+
+/* ===================== RUTA ÚNICA DE VISITA (COFEPRIS) =====================
+   Orden real de una verificación: 1 llegada del verificador, 2 documentos oficiales,
+   3 recorrido por áreas, 4 carpetas, 5 expedientes, 6 hallazgos y diagnóstico.
+   Cada criterio aparece una sola vez, en el lugar donde físicamente se revisa.
+   No cambia el universo de criterios (snapshot) ni el cálculo del diagnóstico. */
+const RUTA_ETAPAS = [
+  {n:1, icon:"🚪", nombre:"Llegada del verificador", sub:"Qué hace el personal en la puerta"},
+  {n:2, icon:"📑", nombre:"Documentos oficiales", sub:"Avisos, licencias, responsable sanitario y publicidad"},
+  {n:3, icon:"🚶", nombre:"Recorrido por áreas", sub:"Recepción, consultorios, almacén, RPBI e instalaciones"},
+  {n:4, icon:"🗂️", nombre:"Carpetas", sub:"Personal, bitácoras, manuales y registros"},
+  {n:5, icon:"📁", nombre:"Expedientes", sub:"Expediente clínico y consentimientos"},
+  {n:6, icon:"🚩", nombre:"Hallazgos y diagnóstico", sub:"Revisa lo encontrado y genera el PDF"},
+];
+const RUTA_AREAS_ORDEN = ["Avisos y licencias","Responsable sanitario y especialidad","Publicidad",
+  "Recepción, sala de espera y sanitarios","Consultorios y cabinas","Almacén, medicamentos y refrigerador","RPBI","Esterilización","Instalaciones, agua y limpieza","Área quirúrgica","Urgencias","Otros puntos del recorrido",
+  "Personal","Registros, bitácoras y RPBI","Manuales y sistemas","Comités y convenios","Expedientes"];
+const RUTA_MAPA = {
+  "Avisos y licencias":[2,["m1-01","m1-02","m1-03","m1-04","m1-05","est-01","est-02","est-03","est-04","hosp-01","hosp-03","mb-01"]],
+  "Responsable sanitario y especialidad":[2,["m2-01","m2-02","m2-03","est-07","est-08","est-16","hosp-02"]],
+  "Publicidad":[2,["m4-01","m4-02","m4-03","m4-04","m4-05"]],
+  "Recepción, sala de espera y sanitarios":[3,["m5-04","est-19","esp-01","dent-01","m5-03","spa-06"]],
+  "Consultorios y cabinas":[3,["m5-01","m5-02","est-22","est-27","est-28","esp-02","esp-03","cons-03","dent-02","dent-07","spa-02","spa-03","spa-04","spa-07","spa-11","mb-10","mb-11","mb-12"]],
+  "Almacén, medicamentos y refrigerador":[3,["est-23","cons-04","spa-01","dent-10","m5-05"]],
+  "RPBI":[3,["m3-02","dent-06","spa-09","hosp-08"]],
+  "Esterilización":[3,["dent-03","dent-04","dent-05","hosp-14"]],
+  "Instalaciones, agua y limpieza":[3,["cons-07","cons-08","spa-05","spa-10","hosp-04","hosp-05","hosp-06","hosp-07","est-10","est-11"]],
+  "Área quirúrgica":[3,["est-09","est-12","hosp-10","hosp-11","hosp-12","hosp-13"]],
+  "Urgencias":[3,["hosp-15","hosp-16","hosp-17"]],
+  "Personal":[4,["m2-04","est-18","mb-03","mb-04","mb-05"]],
+  "Registros, bitácoras y RPBI":[4,["est-17","cons-01","est-20","cons-02","est-25","cons-05","spa-08","cons-06","mb-09","m3-01","m3-03","m3-04","m3-05"]],
+  "Manuales y sistemas":[4,["est-24","est-26","mb-02","hosp-09","est-21"]],
+  "Comités y convenios":[4,["est-05","est-06"]],
+  "Expedientes":[5,["m6-01","m6-02","m6-03","dent-08","dent-09","mb-06","mb-07","mb-08"]],
+};
+const RUTA_CRIT = {};
+Object.entries(RUTA_MAPA).forEach(([area,[et,ids]])=>ids.forEach(id=>{ RUTA_CRIT[id] = {etapa:et, area}; }));
+function rutaDeCriterio(id){ return RUTA_CRIT[id] || {etapa:3, area:"Otros puntos del recorrido"}; }
+// Duplicados dentro de una misma visita: si el principal existe, el secundario no se muestra
+// (sus fundamentos se agregan a la tarjeta del principal).
+const RUTA_DUP = {"est-19":"m2-01", "est-22":"m5-02", "est-27":"m5-01", "cons-05":"est-25", "spa-08":"est-25", "cons-01":"est-17", "cons-02":"est-20", "cons-04":"est-23"};
+const RUTA_SECCIONES = {
+  redes_perfil:[2,"Publicidad"], publicidad_captura:[2,"Publicidad"],
+  mobiliario:[3,"Consultorios y cabinas"], equipo:[3,"Consultorios y cabinas"], procedimiento:[3,"Consultorios y cabinas"],
+  almacen:[3,"Almacén, medicamentos y refrigerador"], medicamento:[3,"Almacén, medicamentos y refrigerador"], insumo:[3,"Almacén, medicamentos y refrigerador"],
+  limpieza:[3,"Instalaciones, agua y limpieza"], agua:[3,"Instalaciones, agua y limpieza"],
+  personal:[4,"Personal"], documento:[4,"Registros, bitácoras y RPBI"], plagas:[4,"Registros, bitácoras y RPBI"],
+};
+const RUTA_PROTOCOLO = `
+  <div class="section-title">Cuando el verificador llega a la puerta</div>
+  <p class="muted small" style="margin:0 0 10px">Esto es para que el personal sepa qué hacer. No se califica.</p>
+  <ol style="padding-left:18px;line-height:1.55;margin:0">
+    <li><b>Recibir con calma y avisar al responsable sanitario</b> o al dueño. Nadie discute ni impide la entrada.</li>
+    <li><b>Pedir su credencial vigente y la orden de visita por escrito</b>, con firma autógrafa de la autoridad. Revisar que la foto coincida y que la dirección y el nombre del establecimiento sean correctos (LGS arts. 399 y 401).</li>
+    <li><b>Leer el objeto y alcance de la orden:</b> qué viene a revisar. La visita se limita a eso.</li>
+    <li><b>Nombrar a dos testigos</b> de su confianza (personal de la clínica). Si no los nombra, el verificador los designa.</li>
+    <li><b>Tener a la mano las 4 carpetas</b> y acompañar al verificador en todo el recorrido. Mostrar solo lo que pide.</li>
+    <li><b>No hacer procedimientos mientras dura la visita</b> y no sacar ni esconder equipos o productos.</li>
+    <li><b>Leer el acta completa antes de firmar.</b> Escribir en el acta las observaciones o aclaraciones que correspondan.</li>
+    <li><b>Quedarse con copia del acta y de la orden.</b> Negarse a firmar no invalida el acta (LGS art. 401); es mejor firmar y anotar observaciones.</li>
+    <li><b>Avisar a Elementos Financieros el mismo día</b> con fotos del acta para preparar la respuesta.</li>
+  </ol>`;
+function rutaAyudaCriterio(cr){
+  const partes = [];
+  if(cr.descripcion) partes.push(`<p style="margin:0 0 8px"><b>Qué es:</b> ${esc(cr.descripcion)}</p>`);
+  if(cr.evidencia_esperada) partes.push(`<p style="margin:0 0 8px"><b>Cómo se ve cuando cumple:</b> ${esc(cr.evidencia_esperada)}</p>`);
+  if(cr.accion) partes.push(`<p style="margin:0 0 8px"><b>Si falta, qué hacer:</b> ${esc(cr.accion)}</p>`);
+  partes.push(`<p class="muted small" style="margin:0"><b>Fundamento:</b> ${esc(cr.fundamento_legal||"—")}</p>`);
+  const tag = APPL_TAG[cr.aplicabilidad] ? APPL_TAG[cr.aplicabilidad].label : "";
+  const sheet = openModal(`<h3 style="margin-bottom:6px">${esc(cr.requisito)}</h3>${tag?`<div class="crit-tag ${APPL_TAG[cr.aplicabilidad].cls}" style="display:inline-block;margin-bottom:10px">${tag}</div>`:""}${partes.join("")}<button class="btn btn-primary" id="m-ok" style="width:100%;margin-top:14px">Entendido</button>`);
+  sheet.querySelector("#m-ok").onclick = closeModal;
+}
+
+const HL_ESTATUS = ["no_cumple","parcial","pendiente","no_verificado"];
+function critHallazgoBadge(cr, estatus){
+  if(!HL_ESTATUS.includes(estatus)) return "";
+  const r = computeCriterioRisk(cr, estatus, cr.runtimeUncertain);
+  const pr = PRIORITY_LABEL[r.prioridad] || r.prioridad;
+  const col = r.prioridad==="CRITICA" ? "#B3261E" : r.prioridad==="ALTA" ? "#B8860B" : "#6B6A64";
+  return `<div class="small" style="margin:8px 0 2px;padding:7px 10px;border-radius:8px;background:#F6EEE4;color:${col}">🚩 Ya está en tus hallazgos · prioridad ${esc(String(pr).toLowerCase())}. Escribe abajo tu observación; responsable y fecha se ponen en el diagnóstico.</div>`;
 }
 
 async function guardarRespuesta(evaluacionId, criterioId, campos){
@@ -3364,6 +3619,7 @@ async function renderDiagnosticoEvaluacion(){
         <div>
           <div style="font-weight:700;color:var(--navy-900);font-size:17px">Riesgo ${esc(diag.band.label)}</div>
           <div class="muted small">Índice de Riesgo Regulatorio · ${diag.contestados} criterio(s) evaluado(s)</div>
+          ${diag.bandNote ? `<div class="small" style="color:#B3261E;margin-top:4px">${esc(diag.bandNote)}</div>` : ""}
         </div>
       </div>
       <p class="muted small" style="margin-top:10px;line-height:1.4">Este índice prioriza atención y urgencia con base en lo observado durante la visita. No determina cumplimiento legal ni autorización sanitaria.</p>
@@ -4043,6 +4299,7 @@ async function generarPdfDiagnostico(cache, mode){
   doc.text(`Riesgo ${diag.band.label}`, margin+72, y+22);
   doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...SOFT);
   doc.text("Indice de Riesgo Regulatorio", margin+72, y+35);
+  if(diag.bandNote){ doc.setFontSize(8.5); doc.setTextColor(179,38,30); doc.text(diag.bandNote, margin+72, y+48); doc.setTextColor(...INK); }
   y += 78; // separación real contra el borde inferior del círculo (radio 30)
   body("Este indice prioriza atencion y urgencia con base en lo observado durante la visita. No determina cumplimiento legal ni autorizacion sanitaria.", {size:10, color:SOFT});
   y+=6; rule();
@@ -4175,142 +4432,14 @@ async function generarPdfDiagnostico(cache, mode){
   }
   y+=4; rule();
 
-  // ---------- Auditoría de expedientes clínicos (si se hizo en la visita) ----------
-  try{
-    const regExp = await expaCargar(ev.id);
-    const expsA = (regExp && regExp.campos && regExp.campos.expedientes) || [];
-    if(expsA.length && ev.nivel_checkup!=="basico"){
-      const evFacts = ev.facts ? ev : (await sb.from("evaluaciones").select("facts").eq("id", ev.id).single()).data || ev;
-      const itemsA = expaItems({facts: evFacts.facts || {}});
-      const resA = expaResumen(itemsA, expsA);
-      const fallanA = resA.filter(x=>x.fallan).sort((p,q)=>q.fallan/q.evaluados - p.fallan/p.evaluados);
-      checkBreak(60);
-      heading(`Auditoría de expedientes clínicos (${expsA.length} revisado${expsA.length===1?"":"s"})`, 13);
-      body("Se revisó una muestra de expedientes reales, identificados solo por folio o iniciales. Para cada elemento se indica en cuántos expedientes falla.", {size:10, color:SOFT, lh:13});
-      y += 4;
-      if(fallanA.length){
-        fallanA.forEach(x=>{
-          const lines = doc.setFont("helvetica","normal").setFontSize(10.5).splitTextToSize(x.t, maxW-110);
-          checkBreak(lines.length*14 + 16);
-          doc.setTextColor(...INK); lines.forEach((l,k)=>doc.text(l, margin, y + k*14));
-          doc.setFont("helvetica","bold"); doc.setTextColor(179,38,30); doc.text(`${x.fallan} de ${x.evaluados}`, pageW-margin, y, {align:"right"});
-          y += lines.length*14;
-          doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...SOFT); doc.text(x.f, margin, y); y += 13;
-        });
-      } else body("En la muestra revisada no se encontraron fallas.", {size:10.5});
-      y += 6;
-      body("Guía de llenado para todo expediente de este establecimiento", {bold:true, size:11, color:NAVY});
-      [...new Set(itemsA.map(it=>it.grupo))].forEach(g=>{
-        body(g, {bold:true, size:10, lh:14});
-        itemsA.filter(it=>it.grupo===g).forEach(it=> body(`[  ]  ${it.t}${it.rec?" (recomendado)":""}`, {size:9.5, lh:12.5}));
-        y += 3;
-      });
-      body("Conservar cada expediente al menos 5 años desde el último acto médico (NOM-004, 5.4).", {size:9, color:SOFT, lh:12});
-      if(fallanA.length){
-        const pls = expaPlantillas({facts: evFacts.facts || {}});
-        const NOMBRES = {base:"medicina general y de especialidad", estetica:"medicina estética", dental:"odontología", quirurgico:"cirugía y procedimientos con anestesia"};
-        const esp = pls.filter(x=>NOMBRES[x]).map(x=>NOMBRES[x]);
-        const CONT = {base:"historia clínica y nota de evolución conforme a la NOM-004", estetica:"consentimientos por procedimiento estético, bitácora de multidosis y autorización de uso de fotografías", dental:"historia clínica estomatológica con odontograma y periodontograma, y consentimientos conforme a la NOM-013", quirurgico:"notas pre y postoperatorias, valoración y registro anestésico, y consentimientos de cirugía y anestesia"};
-        const contenido = pls.filter(x=>CONT[x]).map(x=>CONT[x]).join("; ");
-        const txt = `Paquete de formatos de expediente clínico de Elementos Financieros para ${esp.join(", ")}: ${contenido}. Incluye versión física lista para imprimir y versión digital para llenar e imprimir, personalizadas con los datos de la clínica, y cada formato indica la norma que cumple. Con implementación opcional: capacitación del equipo en el llenado.`;
-        const tl = doc.setFont("helvetica","normal").setFontSize(10).splitTextToSize(txt, maxW-28);
-        const nota = doc.setFontSize(8.5).splitTextToSize("La versión digital no sustituye un expediente clínico electrónico: para operar sin papel se requiere un sistema con certificado SIRES.", maxW-28);
-        const h = 30 + tl.length*13 + nota.length*11 + 8;
-        checkBreak(h + 10); y += 8;
-        doc.setFillColor(241,231,210); doc.roundedRect(margin, y, maxW, h, 6, 6, "F");
-        doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.setTextColor(...NAVY); doc.text("Siguiente paso recomendado", margin+14, y+20);
-        doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(...INK); tl.forEach((l,k)=>doc.text(l, margin+14, y+36+k*13));
-        doc.setFontSize(8.5); doc.setTextColor(...SOFT); nota.forEach((l,k)=>doc.text(l, margin+14, y+36+tl.length*13+4+k*11));
-        y += h + 10;
-      }
-      y += 4; rule();
-    }
-  }catch(audErr){ console.warn("No se pudo agregar la auditoría de expedientes al PDF:", audErr); }
-
-  // ---------- Levantamiento de sitio: lo registrado en el inventario (equipos, personal, etc.) ----------
-  try{
-    const tipoIds = await ensureTipoIds();
-    const [collR, regR] = await Promise.all([
-      cachedRead("ev:"+ev.id+":coll_all", ()=>sb.from("colecciones_items").select("*").eq("evaluacion_id", ev.id).order("created_at")),
-      cachedRead("ev:"+ev.id+":reg_all", ()=>sb.from("registros_unicos").select("*").eq("evaluacion_id", ev.id)),
-    ]);
-    const invItems = collR.data || [], invRegs = regR.data || [];
-    if(invItems.length || invRegs.length){
-      const fotoPorItem = {};
-      if(navigator.onLine && invItems.length){
-        try{
-          const { data: evs } = await sb.from("evidencias").select("coleccion_item_id,storage_path_thumbnail,storage_path_optimizada").in("coleccion_item_id", invItems.map(x=>x.id)).is("anulado_at", null);
-          (evs||[]).forEach(e=>{ if(!fotoPorItem[e.coleccion_item_id]) fotoPorItem[e.coleccion_item_id] = e; });
-        }catch(e){}
-      }
-      const fotoData = async (e) => {
-        try{
-          const { data: signed } = await sb.storage.from("evidencias").createSignedUrl(e.storage_path_thumbnail || e.storage_path_optimizada, 300);
-          if(!signed) return null;
-          const blob = await (await fetch(signed.signedUrl)).blob();
-          return await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(blob); });
-        }catch(err){ return null; }
-      };
-      checkBreak(70);
-      heading(`Levantamiento de sitio (${invItems.length + invRegs.length} registro${invItems.length+invRegs.length===1?"":"s"})`, 13);
-      body("Lo que se registró durante la visita. Es el inventario de referencia para el seguimiento; los puntos por corregir están arriba.", {size:10, color:SOFT, lh:13});
-      y += 6;
-      for(const [codigo, schema] of Object.entries(COLLECTION_SCHEMAS)){
-        const lista = invItems.filter(x=>x.tipo_id===tipoIds["c:"+codigo]);
-        if(!lista.length) continue;
-        checkBreak(40);
-        doc.setFillColor(...NAVY); doc.rect(margin, y-11, maxW, 18, "F");
-        doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(255,255,255);
-        doc.text(`${schema.label} (${lista.length})`, margin+8, y+1);
-        y += 20;
-        for(const it of lista){
-          const campos = it.campos || {};
-          const titulo = campos[schema.titleField] || schema.singular || "(sin nombre)";
-          const detalle = (schema.fields||[]).filter(f=>f.key!==schema.titleField && campos[f.key]).map(f=>`${f.label}: ${campos[f.key]}`).join(" · ");
-          const foto = fotoPorItem[it.id] ? await fotoData(fotoPorItem[it.id]) : null;
-          const tx = margin + (foto ? 58 : 0), tw = maxW - (foto ? 58 : 0);
-          doc.setFont("helvetica","bold"); doc.setFontSize(10.5); const tl = doc.splitTextToSize(titulo, tw);
-          doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
-          const dl = detalle ? doc.splitTextToSize(detalle, tw) : [];
-          const ol = it.observaciones ? doc.splitTextToSize("Obs.: " + it.observaciones, tw) : [];
-          const h = Math.max(foto ? 40 : 0, tl.length*13 + (dl.length+ol.length)*12) + 8;
-          checkBreak(h + 4);
-          const y0 = y;
-          if(foto){ try{ doc.addImage(foto, foto.startsWith("data:image/png") ? "PNG" : "JPEG", margin, y0-9, 50, 38); }catch(e){} }
-          let yy = y0;
-          doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(...INK); tl.forEach(t=>{ doc.text(t, tx, yy); yy+=13; });
-          doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(...SOFT); dl.forEach(t=>{ doc.text(t, tx, yy); yy+=12; }); ol.forEach(t=>{ doc.text(t, tx, yy); yy+=12; });
-          y = Math.max(yy, y0 + (foto ? 34 : 0)) + 6;
-          doc.setDrawColor(232,232,228); doc.line(margin, y-4, pageW-margin, y-4); y += 6;
-        }
-        y += 6;
-      }
-      for(const [codigo, schema] of Object.entries(SINGLE_SCHEMAS)){
-        const reg = invRegs.find(x=>x.tipo_id===tipoIds["r:"+codigo]);
-        if(!reg) continue;
-        checkBreak(40);
-        doc.setFillColor(...NAVY); doc.rect(margin, y-11, maxW, 18, "F");
-        doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(255,255,255);
-        doc.text(schema.label, margin+8, y+1);
-        y += 20;
-        const campos = reg.campos || {};
-        const filas = (schema.fields||[]).filter(f=>campos[f.key]).map(f=>`${f.label}: ${campos[f.key]}`);
-        if(!filas.length) body("Registrado sin detalle.", {size:9.5, color:SOFT, lh:12});
-        filas.forEach(t=> body(t, {size:9.5, color:INK, lh:13}));
-        y += 8;
-      }
-      y += 4; rule();
-    }
-  }catch(invErr){ console.warn("No se pudo agregar el levantamiento de sitio al PDF:", invErr); }
-
   // ---------- Análisis de la situación, en lenguaje claro para el médico ----------
   try{
     const pend = findingsPDF.filter(f=>!["corregido","verificado"].includes((f.hallazgo&&f.hallazgo.estatus_accion)||""));
     const cuenta = k => pend.filter(f=>f.risk.prioridad===k).length;
     const nC = cuenta("CRITICA"), nA = cuenta("ALTA"), nM = cuenta("MEDIA") + cuenta("BAJA");
     const corr = findingsPDF.length - pend.length;
-    const areasTop = (diag.areaRows||[]).slice().sort((x,z)=>z.percent-x.percent).filter(x=>x.percent>=40).slice(0,3);
-    const sinRiesgo = (diag.areaRows||[]).filter(x=>x.percent<20).map(x=>x.modulo);
+    const areasTop = (diag.areaRows||[]).slice().sort((x,z)=>(z.criticos-x.criticos)||(z.percent-x.percent)).filter(x=>x.percent>=40 || x.criticos>0).slice(0,3);
+    const sinRiesgo = (diag.areaRows||[]).filter(x=>!x.hallazgos).map(x=>x.modulo);
     checkBreak(120);
     heading("Análisis de la situación", 13);
     if(!findingsPDF.length){
@@ -4337,8 +4466,185 @@ async function generarPdfDiagnostico(cache, mode){
     y += 6; rule();
   }catch(anErr){ console.warn("No se pudo generar el análisis:", anErr); }
 
+  // ---------- Auditoría de expedientes clínicos (si se hizo en la visita) ----------
+  try{
+    const regExp = await expaCargar(ev.id);
+    const expsA = (regExp && regExp.campos && regExp.campos.expedientes) || [];
+    if(expsA.length && ev.nivel_checkup!=="basico"){
+      const evFacts = ev.facts ? ev : (await sb.from("evaluaciones").select("facts").eq("id", ev.id).single()).data || ev;
+      const itemsA = expaItems({facts: evFacts.facts || {}});
+      const resA = expaResumen(itemsA, expsA);
+      const fallanA = resA.filter(x=>x.fallan).sort((p,q)=>q.fallan/q.evaluados - p.fallan/p.evaluados);
+      checkBreak(70);
+      heading(`Auditoría de expedientes clínicos (${expsA.length} revisado${expsA.length===1?"":"s"})`, 13);
+      body("Revisamos una muestra de expedientes reales, identificados solo por folio o iniciales. Para cada punto se indica en cuántos expedientes falta y cómo corregirlo.", {size:10, color:SOFT, lh:13});
+      y += 6;
+      // Semáforo por expediente (solo cuentan los elementos obligatorios)
+      expsA.forEach(e=>{
+        const nO = expaFallasObl(itemsA, e).length;
+        checkBreak(16);
+        doc.setFillColor(...hexToRgb(expaColorExp(nO))); doc.circle(margin+5, y-3.5, 4, "F");
+        doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(...INK); doc.text(e.ref, margin+16, y);
+        doc.setFont("helvetica","normal"); doc.setTextColor(...SOFT); doc.text(nO ? `${nO} elemento(s) obligatorio(s) faltante(s)` : "completo en lo obligatorio", margin+16+doc.getTextWidth(e.ref)+10, y);
+        y += 15;
+      });
+      body("Verde: completo. Amarillo: 1 o 2 faltas. Rojo: 3 o más.", {size:8.5, color:SOFT, lh:11});
+      y += 6;
+      const tarjeta = (x, gris) => {
+        doc.setFont("helvetica","bold"); doc.setFontSize(10.5);
+        const tl = doc.splitTextToSize(x.t, maxW-90);
+        doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
+        const pl = x.p ? doc.splitTextToSize("Cómo se corrige: " + x.p, maxW-20) : [];
+        const hh = tl.length*13 + pl.length*12 + 22;
+        checkBreak(hh + 6);
+        doc.setFillColor(250,248,244); doc.rect(margin, y-11, maxW, hh, "F");
+        doc.setFillColor(...(gris ? [139,150,160] : (x.fallan===x.evaluados ? [179,38,30] : [184,134,11]))); doc.rect(margin, y-11, 3, hh, "F");
+        let yy = y;
+        doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(...INK); tl.forEach(l=>{ doc.text(l, margin+10, yy); yy+=13; });
+        doc.setTextColor(...(gris ? SOFT : [179,38,30])); doc.text(`Falta en ${x.fallan} de ${x.evaluados}`, pageW-margin-6, y, {align:"right"});
+        doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(...INK); pl.forEach(l=>{ doc.text(l, margin+10, yy); yy+=12; });
+        doc.setFontSize(8); doc.setTextColor(...SOFT); doc.text(x.f, margin+10, yy+1);
+        y += hh + 6;
+      };
+      const fallObl = fallanA.filter(x=>!x.rec), fallRec = fallanA.filter(x=>x.rec);
+      body("Lo que hay que corregir (obligatorio)", {bold:true, size:11, color:NAVY});
+      y += 4;
+      if(fallObl.length) fallObl.forEach(x=>tarjeta(x,false));
+      else body("Ningún elemento obligatorio falta en la muestra revisada.", {size:10.5});
+      if(fallRec.length){ y += 4; body("Recomendado (no es obligación legal)", {bold:true, size:11, color:NAVY}); y += 4; fallRec.forEach(x=>tarjeta(x,true)); }
+      y += 8;
+      body("Guía de llenado: lo que debe tener todo expediente de esta clínica", {bold:true, size:11.5, color:NAVY});
+      body("Úsela como lista de revisión. Lo marcado como obligatorio lo exige la norma; lo recomendado protege a la clínica pero no es obligación.", {size:9.5, color:SOFT, lh:12});
+      y += 4;
+      [...new Set(itemsA.map(it=>it.grupo))].forEach(g=>{
+        checkBreak(30);
+        body(g, {bold:true, size:10.5, lh:15});
+        [["Obligatorio", itemsA.filter(it=>it.grupo===g && !it.rec)], ["Recomendado", itemsA.filter(it=>it.grupo===g && it.rec)]].forEach(([etq, lista])=>{
+          if(!lista.length) return;
+          body(etq.toUpperCase(), {bold:true, size:8, color: etq==="Obligatorio" ? [179,38,30] : SOFT, lh:11, indent:4});
+          lista.forEach(it=>{
+            body(`[  ]  ${it.t}`, {size:9.5, lh:12, indent:4});
+            if(it.p) body(it.p, {size:8.5, lh:11, indent:22, color:SOFT});
+          });
+          y += 2;
+        });
+        y += 4;
+      });
+      body("Conservar cada expediente al menos 5 años desde el último acto médico (NOM-004, 5.4).", {size:9, color:SOFT, lh:12});
+      if(fallanA.length){
+        const pls = expaPlantillas({facts: evFacts.facts || {}});
+        const NOMBRES = {base:"medicina general y de especialidad", estetica:"medicina estética", dental:"odontología", quirurgico:"cirugía y procedimientos con anestesia"};
+        const esp = pls.filter(x=>NOMBRES[x]).map(x=>NOMBRES[x]);
+        const CONT = {base:"historia clínica y nota de evolución conforme a la NOM-004", estetica:"consentimientos por procedimiento estético, bitácora de multidosis y autorización de uso de fotografías", dental:"historia clínica estomatológica con odontograma y periodontograma, y consentimientos conforme a la NOM-013", quirurgico:"notas pre y postoperatorias, valoración y registro anestésico, y consentimientos de cirugía y anestesia"};
+        const contenido = pls.filter(x=>CONT[x]).map(x=>CONT[x]).join("; ");
+        const txt = `Paquete de formatos de expediente clínico de Elementos Financieros para ${esp.join(", ")}: ${contenido}. Incluye versión física lista para imprimir y versión digital para llenar e imprimir, personalizadas con los datos de la clínica, y cada formato indica la norma que cumple. Con implementación opcional: capacitación del equipo en el llenado.`;
+        const tl = doc.setFont("helvetica","normal").setFontSize(10).splitTextToSize(txt, maxW-28);
+        const nota = doc.setFontSize(8.5).splitTextToSize("La versión digital no sustituye un expediente clínico electrónico: para operar sin papel se requiere un sistema con certificado SIRES.", maxW-28);
+        const h = 30 + tl.length*13 + nota.length*11 + 8;
+        checkBreak(h + 10); y += 8;
+        doc.setFillColor(241,231,210); doc.roundedRect(margin, y, maxW, h, 6, 6, "F");
+        doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.setTextColor(...NAVY); doc.text("Siguiente paso recomendado", margin+14, y+20);
+        doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(...INK); tl.forEach((l,k)=>doc.text(l, margin+14, y+36+k*13));
+        doc.setFontSize(8.5); doc.setTextColor(...SOFT); nota.forEach((l,k)=>doc.text(l, margin+14, y+36+tl.length*13+4+k*11));
+        y += h + 10;
+      }
+      y += 4; rule();
+    }
+  }catch(audErr){ console.warn("No se pudo agregar la auditoría de expedientes al PDF:", audErr); }
+
   heading("Conclusión", 13);
   body(`El presente documento constituye un diagnóstico de revisión realizado con base en la información, documentación y evidencia recabada durante la visita del ${ev.fecha_visita||"(fecha no registrada)"}. No sustituye una visita de verificación ni una resolución emitida por la autoridad sanitaria.`);
+
+  // ---------- Levantamiento de sitio: lo registrado en el inventario (equipos, personal, etc.) ----------
+  try{
+    const tipoIds = await ensureTipoIds();
+    const [collR, regR] = await Promise.all([
+      cachedRead("ev:"+ev.id+":coll_all", ()=>sb.from("colecciones_items").select("*").eq("evaluacion_id", ev.id).order("created_at")),
+      cachedRead("ev:"+ev.id+":reg_all", ()=>sb.from("registros_unicos").select("*").eq("evaluacion_id", ev.id)),
+    ]);
+    const invItems = collR.data || [], invRegs = (regR.data || []).filter(r=>Object.entries(SINGLE_SCHEMAS).some(([cod])=>tipoIds["r:"+cod]===r.tipo_id));
+    if(invItems.length || invRegs.length){
+      const fotoPorItem = {};
+      if(navigator.onLine && invItems.length){
+        try{
+          const { data: evs } = await sb.from("evidencias").select("coleccion_item_id,storage_path_thumbnail,storage_path_optimizada").in("coleccion_item_id", invItems.map(x=>x.id)).is("anulado_at", null);
+          (evs||[]).forEach(e=>{ if(!fotoPorItem[e.coleccion_item_id]) fotoPorItem[e.coleccion_item_id] = e; });
+        }catch(e){}
+      }
+      const fotoData = async (e) => {
+        try{
+          const { data: signed } = await sb.storage.from("evidencias").createSignedUrl(e.storage_path_thumbnail || e.storage_path_optimizada, 300);
+          if(!signed) return null;
+          const blob = await (await fetch(signed.signedUrl)).blob();
+          return await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(blob); });
+        }catch(err){ return null; }
+      };
+      checkBreak(70);
+      doc.addPage(); y = margin;
+      heading(`Anexo · Lo que se registró en la visita (${invItems.length + invRegs.length})`, 13);
+      body("Inventario de referencia para el seguimiento. Los puntos por corregir están en el diagnóstico; aquí solo se documenta lo que se vio.", {size:10, color:SOFT, lh:13});
+      y += 6;
+      for(const [codigo, schema] of Object.entries(COLLECTION_SCHEMAS)){
+        const lista = invItems.filter(x=>x.tipo_id===tipoIds["c:"+codigo]);
+        if(!lista.length) continue;
+        checkBreak(40);
+        doc.setFillColor(...NAVY); doc.rect(margin, y-11, maxW, 18, "F");
+        doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(255,255,255);
+        doc.text(`${schema.label} (${lista.length})`, margin+8, y+1);
+        y += 20;
+        for(const it of lista){
+          const campos = it.campos || {};
+          const titulo = campos[schema.titleField] || schema.singular || "(sin nombre)";
+          const filas = (schema.fields||[]).filter(f=>f.key!==schema.titleField && campos[f.key] && String(campos[f.key]).trim()).map(f=>[f.label, String(campos[f.key])]);
+          const foto = fotoPorItem[it.id] ? await fotoData(fotoPorItem[it.id]) : null;
+          const PW = 96, PH = 72;
+          const tx = margin + 10 + (foto ? PW + 12 : 0), tw = pageW - margin - 10 - tx;
+          doc.setFont("helvetica","bold"); doc.setFontSize(11); const tl = doc.splitTextToSize(titulo, tw);
+          const lineas = [];
+          doc.setFontSize(9);
+          filas.forEach(([lab,val])=>{ doc.setFont("helvetica","normal"); const vl = doc.splitTextToSize(val, tw-92); lineas.push([lab, vl]); });
+          const obsL = it.observaciones ? (doc.setFont("helvetica","normal"), doc.setFontSize(9), doc.splitTextToSize(it.observaciones, maxW-34)) : [];
+          const altoTexto = tl.length*14 + lineas.reduce((a,[,vl])=>a+vl.length*11.5,0) + 4;
+          const altoObs = obsL.length ? obsL.length*11.5 + 14 : 0;
+          const hh = Math.max(foto ? PH + 8 : 0, altoTexto) + altoObs + 16;
+          checkBreak(hh + 8);
+          const y0 = y;
+          doc.setDrawColor(226,222,214); doc.setFillColor(252,251,248); doc.roundedRect(margin, y0-12, maxW, hh, 6, 6, "FD");
+          if(foto){ try{ doc.addImage(foto, foto.startsWith("data:image/png") ? "PNG" : "JPEG", margin+10, y0-4, PW, PH); }catch(e){} }
+          let yy = y0+4;
+          doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(...NAVY); tl.forEach(t=>{ doc.text(t, tx, yy); yy+=14; });
+          lineas.forEach(([lab,vl])=>{
+            doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.setTextColor(...SOFT); doc.text(lab, tx, yy);
+            doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...INK); vl.forEach((v,k)=>doc.text(v, tx+92, yy + k*11.5));
+            yy += vl.length*11.5;
+          });
+          let yb = Math.max(yy, y0 + (foto ? PH : 0)) + 4;
+          if(obsL.length){
+            doc.setFillColor(243,236,222); doc.rect(margin+10, yb-2, maxW-20, obsL.length*11.5+8, "F");
+            doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.setTextColor(...NAVY); doc.text("Observación", margin+16, yb+8);
+            doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...INK); obsL.forEach((o,k)=>doc.text(o, margin+80, yb+8+k*11.5));
+          }
+          y = y0 - 12 + hh + 14;
+        }
+        y += 6;
+      }
+      for(const [codigo, schema] of Object.entries(SINGLE_SCHEMAS)){
+        const reg = invRegs.find(x=>x.tipo_id===tipoIds["r:"+codigo]);
+        if(!reg) continue;
+        checkBreak(40);
+        doc.setFillColor(...NAVY); doc.rect(margin, y-11, maxW, 18, "F");
+        doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(255,255,255);
+        doc.text(schema.label, margin+8, y+1);
+        y += 20;
+        const campos = reg.campos || {};
+        const filas = (schema.fields||[]).filter(f=>campos[f.key]).map(f=>`${f.label}: ${campos[f.key]}`);
+        if(!filas.length) body("Registrado sin detalle.", {size:9.5, color:SOFT, lh:12});
+        filas.forEach(t=> body(t, {size:9.5, color:INK, lh:13}));
+        y += 8;
+      }
+      y += 4; rule();
+    }
+  }catch(invErr){ console.warn("No se pudo agregar el levantamiento de sitio al PDF:", invErr); }
 
   const fileName = `CHECK-UP-REGULATORIO-${(nombreExpediente||"establecimiento").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9]+/g,"-")}-${ev.fecha_visita||new Date().toISOString().slice(0,10)}.pdf`;
   const blob = doc.output("blob");
@@ -6293,44 +6599,44 @@ function spaAplicarClasificacion(w){
    NOM-006-SSA3-2011 y Guía de autoverificación COFEPRIS (estética, 2026). rec = recomendado. */
 const EXPA_ITEMS = {
   base: {label:"Base (todo expediente médico)", items:[
-    {k:"b1", t:"Datos del establecimiento: tipo, nombre, domicilio y, en su caso, razón social", f:"NOM-004, 5.2.1–5.2.2"},
-    {k:"b2", t:"Identificación del paciente: nombre, sexo, edad y domicilio", f:"NOM-004, 5.2.3"},
-    {k:"b3", t:"Historia clínica: interrogatorio (identificación, heredofamiliares, personales patológicos y no patológicos, padecimiento actual, aparatos y sistemas)", f:"NOM-004, 6.1.1"},
-    {k:"b4", t:"Exploración física con signos vitales, peso y talla", f:"NOM-004, 6.1.2"},
-    {k:"b5", t:"Diagnóstico, pronóstico e indicación terapéutica", f:"NOM-004, 6.1.4–6.1.6"},
-    {k:"b6", t:"Nota de evolución en cada atención", f:"NOM-004, 6.2"},
-    {k:"b7", t:"Medicamentos con dosis, vía de administración y periodicidad", f:"NOM-004, 6.2.6"},
-    {k:"b8", t:"Cada nota con fecha, hora, nombre completo y firma de quien la elabora", f:"NOM-004, 5.10"},
-    {k:"b9", t:"Lenguaje técnico, sin abreviaturas, letra legible, sin tachaduras ni enmendaduras", f:"NOM-004, 5.11"},
-    {k:"b10", t:"Consentimiento informado completo cuando el procedimiento lo requiere (acto, riesgos y beneficios, autorización para contingencias, firmas del paciente, del médico y de dos testigos)", f:"NOM-004, 10.1"},
-    {k:"b11", t:"Autorización escrita del paciente para usar fotografías que lo identifiquen", f:"NOM-004, 5.5"},
-    {k:"b12", t:"Copia del contrato o paquete contratado, si existe", f:"NOM-004, 5.19"},
-    {k:"b13", t:"Un solo expediente por paciente con todas las notas de quienes lo atienden", f:"NOM-004, 5.14"},
+    {k:"b1", t:"Datos del establecimiento: tipo, nombre, domicilio y, en su caso, razón social", f:"NOM-004, 5.2.1–5.2.2", p:"Encabezado con nombre, tipo y domicilio de la clínica en cada hoja. Se resuelve imprimiendo los formatos con membrete."},
+    {k:"b2", t:"Identificación del paciente: nombre, sexo, edad y domicilio", f:"NOM-004, 5.2.3", p:"Nombre completo, sexo, edad y domicilio del paciente en la primera hoja."},
+    {k:"b3", t:"Historia clínica: interrogatorio (identificación, heredofamiliares, personales patológicos y no patológicos, padecimiento actual, aparatos y sistemas)", f:"NOM-004, 6.1.1", p:"En la primera consulta: antecedentes de la familia y del paciente, qué le pasa ahora y revisión por aparatos y sistemas."},
+    {k:"b4", t:"Exploración física con signos vitales, peso y talla", f:"NOM-004, 6.1.2", p:"En cada valoración: presión, frecuencia cardiaca, temperatura, peso y talla."},
+    {k:"b5", t:"Diagnóstico, pronóstico e indicación terapéutica", f:"NOM-004, 6.1.4–6.1.6", p:"Escribir qué tiene el paciente, qué se espera y qué tratamiento se le indica."},
+    {k:"b6", t:"Nota de evolución en cada atención", f:"NOM-004, 6.2", p:"Cada vez que se atiende al paciente, una nota con lo que se hizo y cómo va."},
+    {k:"b7", t:"Medicamentos con dosis, vía de administración y periodicidad", f:"NOM-004, 6.2.6", p:"Cada medicamento con su dosis, la vía (oral, inyectado, etc.) y cada cuánto."},
+    {k:"b8", t:"Cada nota con fecha, hora, nombre completo y firma de quien la elabora", f:"NOM-004, 5.10", p:"Toda nota lleva fecha, hora, nombre completo y firma de quien la escribe."},
+    {k:"b9", t:"Lenguaje técnico, sin abreviaturas, letra legible, sin tachaduras ni enmendaduras", f:"NOM-004, 5.11", p:"Letra legible, sin abreviaturas, sin tachones ni corrector. Si hay un error, se anota la corrección con fecha y firma."},
+    {k:"b10", t:"Consentimiento informado completo cuando el procedimiento lo requiere (acto, riesgos y beneficios, autorización para contingencias, firmas del paciente, del médico y de dos testigos)", f:"NOM-004, 10.1", p:"Antes de un procedimiento con riesgo: carta que explica el procedimiento, sus riesgos y beneficios, firmada por paciente, médico y dos testigos."},
+    {k:"b11", t:"Autorización escrita del paciente para usar fotografías que lo identifiquen", f:"NOM-004, 5.5", p:"Si se toman fotos donde se reconoce al paciente, su autorización por escrito para tomarlas y usarlas."},
+    {k:"b12", t:"Copia del contrato o paquete contratado, si existe", f:"NOM-004, 5.19", p:"Si el paciente compró un paquete o contrato, guardar una copia en su expediente."},
+    {k:"b13", t:"Un solo expediente por paciente con todas las notas de quienes lo atienden", f:"NOM-004, 5.14", p:"Un solo expediente por paciente; todos los que lo atienden escriben en el mismo."},
   ]},
   estetica: {label:"Medicina estética no quirúrgica", items:[
-    {k:"e1", t:"Producto aplicado identificado (nombre, lote y caducidad); en multidosis, registrado en la bitácora", f:"Guía de autoverificación COFEPRIS estética 2026; NOM-004, 6.2.6"},
-    {k:"e2", t:"Consentimiento específico por procedimiento (toxina, relleno, láser, etc.)", f:"NOM-004, 10.1.2.8 (alto riesgo a criterio del médico)", rec:true},
-    {k:"e3", t:"Fotografías clínicas de antes y después integradas al expediente", f:"Buena práctica", rec:true},
+    {k:"e1", t:"Producto aplicado identificado (nombre, lote y caducidad); en multidosis, registrado en la bitácora", f:"Guía de autoverificación COFEPRIS estética 2026; NOM-004, 6.2.6", p:"En la nota: nombre del producto aplicado, lote y caducidad. Si es frasco multidosis, también en la bitácora."},
+    {k:"e2", t:"Consentimiento específico por procedimiento (toxina, relleno, láser, etc.)", f:"NOM-004, 10.1.2.8 (alto riesgo a criterio del médico)", p:"Una carta de consentimiento propia de cada tratamiento (toxina, relleno, láser), no una genérica para todo.", rec:true},
+    {k:"e3", t:"Fotografías clínicas de antes y después integradas al expediente", f:"Buena práctica", p:"Fotos de antes y después guardadas en el expediente, con la autorización del paciente.", rec:true},
   ]},
   dental: {label:"Dental", items:[
-    {k:"d1", t:"Identificación del consultorio, del estomatólogo, del paciente y fecha", f:"NOM-013, 9.1"},
-    {k:"d2", t:"Historia clínica con factores de riesgo, antecedentes, exploración de cavidad bucal, cabeza y cuello, signos vitales, peso y talla", f:"NOM-013, 9.2"},
-    {k:"d3", t:"Odontograma inicial y periodontograma con nomenclatura FDI", f:"NOM-013, 9.2.2.8"},
-    {k:"d4", t:"Odontograma y periodontograma de seguimiento, firmado por el paciente al alta", f:"NOM-013, 9.2.2.9"},
-    {k:"d5", t:"Diagnóstico según CIE y plan de tratamiento por fases", f:"NOM-013, 9.2.2.11–12"},
-    {k:"d6", t:"Notas de evolución en cada cita con firma del estomatólogo y del paciente", f:"NOM-013, 9.3 y 9.3.7"},
-    {k:"d7", t:"Medicamentos: principio activo, presentación, dosis, vía, periodicidad, duración y posibles efectos adversos", f:"NOM-013, 9.3.6"},
-    {k:"d8", t:"Consentimiento por procedimiento con alternativas explicadas y firmas del estomatólogo, paciente y un testigo; uno nuevo si cambia el plan", f:"NOM-013, 9.6"},
+    {k:"d1", t:"Identificación del consultorio, del estomatólogo, del paciente y fecha", f:"NOM-013, 9.1", p:"Datos del consultorio, del dentista, del paciente y la fecha."},
+    {k:"d2", t:"Historia clínica con factores de riesgo, antecedentes, exploración de cavidad bucal, cabeza y cuello, signos vitales, peso y talla", f:"NOM-013, 9.2", p:"Historia clínica con antecedentes, revisión de boca, cabeza y cuello, signos vitales, peso y talla."},
+    {k:"d3", t:"Odontograma inicial y periodontograma con nomenclatura FDI", f:"NOM-013, 9.2.2.8", p:"Odontograma y periodontograma al inicio, con la nomenclatura internacional (FDI)."},
+    {k:"d4", t:"Odontograma y periodontograma de seguimiento, firmado por el paciente al alta", f:"NOM-013, 9.2.2.9", p:"Odontograma y periodontograma de seguimiento; al alta, firmado por el paciente."},
+    {k:"d5", t:"Diagnóstico según CIE y plan de tratamiento por fases", f:"NOM-013, 9.2.2.11–12", p:"Diagnóstico y plan de tratamiento por etapas."},
+    {k:"d6", t:"Notas de evolución en cada cita con firma del estomatólogo y del paciente", f:"NOM-013, 9.3 y 9.3.7", p:"Nota en cada cita, firmada por el dentista y por el paciente."},
+    {k:"d7", t:"Medicamentos: principio activo, presentación, dosis, vía, periodicidad, duración y posibles efectos adversos", f:"NOM-013, 9.3.6", p:"Medicamentos con principio activo, presentación, dosis, vía, cada cuánto, cuántos días y efectos adversos posibles."},
+    {k:"d8", t:"Consentimiento por procedimiento con alternativas explicadas y firmas del estomatólogo, paciente y un testigo; uno nuevo si cambia el plan", f:"NOM-013, 9.6", p:"Consentimiento por procedimiento, con alternativas explicadas y firmas del dentista, el paciente y un testigo; uno nuevo si cambia el plan."},
   ]},
   quirurgico: {label:"Cirugía y procedimientos con anestesia", items:[
-    {k:"q1", t:"Nota preoperatoria: fecha, diagnóstico, plan quirúrgico, tipo de intervención, riesgo, cuidados y pronóstico", f:"NOM-004, 8.5"},
-    {k:"q2", t:"Valoración preanestésica", f:"NOM-006-SSA3-2011; NOM-004, 8.7"},
-    {k:"q3", t:"Registro anestésico (vigilancia transanestésica)", f:"NOM-006-SSA3-2011; NOM-004, 8.7"},
-    {k:"q4", t:"Nota postoperatoria completa: técnica, hallazgos, conteo de gasas e instrumental, sangrado, incidentes, ayudantes y plan", f:"NOM-004, 8.8"},
-    {k:"q5", t:"Consentimientos de cirugía y de anestesia", f:"NOM-004, 10.1.2.2–10.1.2.3"},
-    {k:"q6", t:"Hoja de enfermería: signos vitales, medicamentos con fecha, hora, cantidad y vía", f:"NOM-004, 9.1"},
-    {k:"q7", t:"Nota de egreso", f:"NOM-004, 8.9"},
-    {k:"q8", t:"Lista de verificación de cirugía segura (OMS)", f:"NOM-004, 8.6", rec:true},
+    {k:"q1", t:"Nota preoperatoria: fecha, diagnóstico, plan quirúrgico, tipo de intervención, riesgo, cuidados y pronóstico", f:"NOM-004, 8.5", p:"Antes de operar: nota con fecha, diagnóstico, plan, tipo de cirugía, riesgo, cuidados y pronóstico."},
+    {k:"q2", t:"Valoración preanestésica", f:"NOM-006-SSA3-2011; NOM-004, 8.7", p:"Valoración del anestesiólogo antes de la cirugía."},
+    {k:"q3", t:"Registro anestésico (vigilancia transanestésica)", f:"NOM-006-SSA3-2011; NOM-004, 8.7", p:"Registro de signos y medicamentos durante la anestesia."},
+    {k:"q4", t:"Nota postoperatoria completa: técnica, hallazgos, conteo de gasas e instrumental, sangrado, incidentes, ayudantes y plan", f:"NOM-004, 8.8", p:"Al terminar: técnica, hallazgos, conteo de gasas e instrumental, sangrado, incidentes, ayudantes y plan."},
+    {k:"q5", t:"Consentimientos de cirugía y de anestesia", f:"NOM-004, 10.1.2.2–10.1.2.3", p:"Una carta de consentimiento para la cirugía y otra para la anestesia."},
+    {k:"q6", t:"Hoja de enfermería: signos vitales, medicamentos con fecha, hora, cantidad y vía", f:"NOM-004, 9.1", p:"Hoja de enfermería con signos vitales y medicamentos con fecha, hora, cantidad y vía."},
+    {k:"q7", t:"Nota de egreso", f:"NOM-004, 8.9", p:"Nota de egreso cuando el paciente se va: diagnóstico final, resumen e indicaciones."},
+    {k:"q8", t:"Lista de verificación de cirugía segura (OMS)", f:"NOM-004, 8.6", p:"Lista de verificación de cirugía segura antes, durante y al final de la cirugía.", rec:true},
   ]},
 };
 function expaPlantillas(ev){
@@ -6373,6 +6679,22 @@ async function expaGuardar(ev, reg, campos){
   await patchCache("ev:"+ev.id+":reg:auditoria_expedientes", ()=>reg);
   return reg;
 }
+function expaColorExp(nObl){ return nObl===0 ? "#2E7D4F" : nObl<=2 ? "#B8860B" : "#B3261E"; }
+function expaFallasObl(items, e){ return items.filter(it=>!it.rec && (e.r||{})[it.k]==="no"); }
+function expaResultadoHtml(items, exps, res){
+  const obl = res.filter(x=>!x.rec && x.fallan).sort((a,b)=>b.fallan/b.evaluados - a.fallan/a.evaluados);
+  const rec = res.filter(x=>x.rec && x.fallan);
+  const chips = exps.map(e=>{ const n = expaFallasObl(items, e).length; return `<span style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;padding:4px 10px;margin:0 6px 6px 0;font-size:13px"><span style="width:10px;height:10px;border-radius:50%;background:${expaColorExp(n)}"></span>${esc(e.ref)} · ${n ? n+" falla"+(n===1?"":"s") : "en orden"}</span>`; }).join("");
+  const card = (x, gris) => `<div style="border:1px solid var(--line);border-left:4px solid ${gris?"#8B96A0":(x.fallan===x.evaluados?"#B3261E":"#B8860B")};border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#fff">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><b style="font-size:14px">${esc(x.t)}</b><span style="white-space:nowrap;font-weight:700;color:${gris?"#6B6A64":"#B3261E"}">${x.fallan} de ${x.evaluados}</span></div>
+      ${x.p ? `<div style="font-size:13px;margin-top:6px"><b>Cómo se corrige:</b> ${esc(x.p)}</div>` : ""}
+      <div class="muted small" style="margin-top:4px">${esc(x.grupo)} · ${esc(x.f)}</div></div>`;
+  return `<div class="card"><div class="section-title">Así salió cada expediente</div>
+      <p class="muted small" style="margin:0 0 8px">Verde: completo. Amarillo: 1 o 2 faltas. Rojo: 3 o más. Solo cuentan los elementos obligatorios.</p>${chips}</div>
+    <div class="card"><div class="section-title">Lo que hay que corregir (obligatorio)</div>
+      ${obl.length ? obl.map(x=>card(x,false)).join("") : `<div class="empty-note">Ningún elemento obligatorio falla en la muestra.</div>`}</div>
+    ${rec.length ? `<div class="card"><div class="section-title">Recomendado (no es obligación)</div>${rec.map(x=>card(x,true)).join("")}</div>` : ""}`;
+}
 async function renderExpAudit(){
   const ev = state.currentEvaluacion; if(!ev){ go("dashboard"); return; }
   const items = ev.nivel_checkup==="basico" ? [] : expaItems(ev);
@@ -6388,9 +6710,7 @@ async function renderExpAudit(){
       <p class="muted small" style="margin:0 0 10px">Revisa de 3 a 5 expedientes reales. Identifícalos solo con folio o iniciales; nunca escribas el nombre completo del paciente.</p>
       <div id="expa-list"></div>
       <button class="action-btn" id="expa-add"><span>+ Revisar un expediente</span><span>→</span></button>
-      ${exps.length ? `<div class="card"><div class="section-title">Resultado de la muestra</div>
-        ${res.filter(x=>x.evaluados).map(x=>`<div class="small-row" style="display:block"><div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(x.t)}${x.rec?" <span class='muted small'>(recomendado)</span>":""}</span><b style="color:${x.fallan? "#B3261E":"#2E7D4F"};white-space:nowrap">${x.fallan?`${x.fallan} de ${x.evaluados} fallan`:"Cumple"}</b></div><div class="muted small">${esc(x.grupo)} · ${esc(x.f)}</div></div>`).join("")}
-      </div>
+      ${exps.length ? expaResultadoHtml(items, exps, res) + `
       <button class="action-btn" id="expa-hall" style="background:var(--navy-800)"><span>🚩 Crear (o actualizar) el hallazgo de expedientes</span><span>→</span></button>
       <p class="muted small" style="text-align:center;margin:8px 0 0">El resultado y la guía de llenado se incluyen en el PDF del diagnóstico.</p>` : ""}`}
     </div>`;
@@ -6442,7 +6762,8 @@ function expaEditar(ev, items, campos, reg, idx){
     <h3 style="margin:0 0 4px">${esc(e.ref)}</h3>
     <p class="muted small" style="margin:0 0 10px">Marca cada elemento: Sí, No o No aplica.</p>
     <div id="expa-items">${grupos.map(g=>`<div class="section-title" style="margin-top:12px">${esc(g)}</div>` + items.filter(i=>i.grupo===g).map(i=>`
-      <div style="padding:8px 0;border-bottom:1px solid var(--line)"><div style="font-size:14px">${esc(i.t)}${i.rec?" <span class='muted small'>(recomendado)</span>":""}</div>
+      <div style="padding:8px 0;border-bottom:1px solid var(--line)"><div style="font-size:14px">${esc(i.t)} <span class="crit-tag ${i.rec?"tag-buenapractica":"tag-obligatorio"}" style="display:inline-block;font-size:10px;padding:1px 6px">${i.rec?"RECOMENDADO":"OBLIGATORIO"}</span></div>
+      ${i.p ? `<div style="font-size:12.5px;color:#4A4A44;margin-top:3px">${esc(i.p)}</div>` : ""}
       <div class="muted small">${esc(i.f)}</div>
       <div class="chip-grid" style="margin-top:6px" data-k="${i.k}">${[["si","Sí"],["no","No"],["na","No aplica"]].map(([v,l])=>`<span class="chip ${e.r[i.k]===v?"selected":""}" data-v="${v}">${l}</span>`).join("")}</div></div>`).join("")).join("")}</div>
     <button class="btn btn-primary" id="expa-ok" style="width:100%;margin-top:14px">Guardar</button>
@@ -6462,14 +6783,14 @@ async function generarPdfExpAudit(ev, items, exps){
   c.body(`Se revisó una muestra de ${exps.length} expediente(s), identificados solo por folio o iniciales. Para cada elemento se indica en cuántos expedientes falla. La sección final es la guía de llenado que debe seguir todo expediente de este establecimiento.`, {size:10.5, lh:15}); c.y+=6;
   const fallan = res.filter(x=>x.fallan);
   c.heading(`Lo que falla (${fallan.length})`);
-  if(fallan.length) fallan.sort((a,b)=>b.fallan/b.evaluados - a.fallan/a.evaluados).forEach(x=>c.row(x.t, `${x.fallan} de ${x.evaluados}`, x.fallan===x.evaluados));
+  if(fallan.length) fallan.sort((a,b)=>(a.rec-b.rec) || (b.fallan/b.evaluados - a.fallan/a.evaluados)).forEach(x=>{ c.row(x.t + (x.rec?" (recomendado)":""), `${x.fallan} de ${x.evaluados}`, x.fallan===x.evaluados && !x.rec); if(x.p) c.body("Cómo se corrige: "+x.p, {size:9, indent:10, color:c.SOFT, lh:11}); });
   else c.body("En la muestra revisada no se encontraron fallas.", {size:10.5});
   c.heading("Detalle por expediente");
   exps.forEach(e=>{ const no = items.filter(it=>(e.r||{})[it.k]==="no"); c.body(`${e.ref}: ${no.length ? no.length+" elemento(s) faltante(s)" : "sin fallas"}`, {bold:true, size:10.5}); no.forEach(it=>c.body("•  "+it.t, {size:9.5, indent:10, lh:12})); c.y+=3; });
   c.heading("Guía de llenado");
   [...new Set(items.map(i=>i.grupo))].forEach(g=>{
     c.body(g, {bold:true, size:11, color:c.NAVY});
-    items.filter(i=>i.grupo===g).forEach(i=>{ c.body(`[  ]  ${i.t}${i.rec?" (recomendado)":""}`, {size:10, indent:6, lh:13}); c.body(i.f, {size:8.5, indent:22, color:c.SOFT, lh:11}); });
+    items.filter(i=>i.grupo===g).sort((a,b)=>(a.rec?1:0)-(b.rec?1:0)).forEach(i=>{ c.body(`[  ]  ${i.t}${i.rec?" (recomendado)":" (obligatorio)"}`, {size:10, indent:6, lh:13}); if(i.p) c.body(i.p, {size:8.5, indent:22, lh:11}); c.body(i.f, {size:8, indent:22, color:c.SOFT, lh:10}); });
     c.y+=4;
   });
   c.body("Conservación: todo expediente debe guardarse al menos 5 años desde el último acto médico (NOM-004, 5.4).", {size:9.5, color:c.SOFT, lh:12});
