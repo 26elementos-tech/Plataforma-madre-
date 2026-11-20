@@ -267,30 +267,94 @@ const NIVELES = [
    igual que en V3. tipos_coleccion/tipos_registro_unico ya existen como catálogo en
    Supabase (por codigo) -- aquí solo se resuelven sus IDs, los campos que se muestran
    se definen aquí para no depender de esquema_campos (que quedó vacío en el seed). */
-/* Aparatología: ¿requiere registro sanitario? Basado en el art. 83 del Reglamento de Insumos para la Salud y el
-   Acuerdo de listados de dispositivos médicos de bajo riesgo (DOF 07-07-2025): req = requiere registro;
-   no = exento (Anexo DOS); ver = verificar. Ante duda, nunca "no requiere". */
+/* Aparatología: ¿requiere registro sanitario? (revisado 2026-11-20)
+   - LGS art. 262: es dispositivo médico lo que se usa en personas con finalidad médica (diagnóstico, prevención,
+     tratamiento, cicatrización, modificación de la anatomía o de un proceso fisiológico...). LGS art. 376: los
+     dispositivos médicos requieren registro, salvo los exceptuados.
+   - Acuerdo de listados (DOF 07-07-2025), Anexo TRES (no son insumos para la salud): "Unidad de masaje por
+     vacío" (1905), "Equipo de masaje corporal con calor regulado y aplicación de presión" (797), "Máquinas de
+     masaje mecánicas para fisioterapia" (1158). Anexo DOS (bajo riesgo sin registro): báscula, lámpara de
+     exploración, brazalete, camilla, limpiador ultrasónico, entre otros.
+   - Equipos estéticos no invasivos (radiofrecuencia sin agujas, cavitación, Carbox, hidrafacial, IPL/láser de
+     depilación...): COFEPRIS resuelve por modelo con "oficio de no requerimiento" cuando el fabricante declara
+     uso estético (p. ej. oficios 133300CO210231 Carbox Soft y 143300CO210109 láser diodo Coolite, 2014). Se
+     aceptan como respaldo: registro, oficio o manual/ficha con uso estético. Sin respaldo = sujeto a revisión.
+   - Equipos médicos o invasivos (rompen piel o destruyen tejido): requieren registro sanitario.
+   - Un equipo estético que se usa para tratar una enfermedad o se anuncia con efecto médico deja de estar
+     cubierto por su uso estético: requiere registro.
+   Grupos: exento | estetico | medico. */
 const APARATO_CAT = [
-  ["Láser (depilación, dermatológico o quirúrgico)","req"], ["IPL / luz pulsada intensa","req"], ["Radiofrecuencia","req"],
-  ["HIFU / ultrasonido focalizado","req"], ["Criolipólisis","req"], ["Cavitación / ultrasonido estético","req"],
-  ["Electroestimulación / electroporación","req"], ["Microneedling eléctrico (dermapen)","req"], ["Electrocauterio / electrobisturí","req"],
-  ["Autoclave / esterilizador","req"], ["Unidad dental / lámpara de fotocurado","req"], ["Equipo de rayos X dental","req"],
-  ["Hidrafacial / microdermoabrasión con equipo","ver"], ["Baumanómetro digital","ver"], ["Vaporizador facial / lámpara lupa","ver"],
-  ["Báscula con estadímetro","no"], ["Lámpara de exploración","no"], ["Brazalete de presión (solo el brazalete)","no"],
-  ["Camilla o mesa de exploración","no"], ["Limpiador ultrasónico de instrumental","no"], ["Otro","ver"],
+  ["Radiofrecuencia corporal o facial (sin agujas)","estetico"], ["Cavitación / ultrasonido estético","estetico"],
+  ["Carboxiterapia (Carbox)","estetico"], ["Hidrafacial / microdermoabrasión con equipo","estetico"],
+  ["IPL / luz pulsada intensa","estetico"], ["Láser de depilación (diodo, alexandrita, Nd:YAG)","estetico"],
+  ["Electroestimulación / electroporación","estetico"], ["LED / fotobiomodulación facial","estetico"],
+  ["Presoterapia","estetico"], ["Vaporizador facial / lámpara lupa","estetico"], ["Multifuncional estético","estetico"],
+  ["Vacumterapia / masaje por vacío","exento"], ["Masaje corporal con calor y presión","exento"], ["Máquina de masaje mecánica","exento"],
+  ["Báscula con estadímetro","exento"], ["Lámpara de exploración","exento"], ["Brazalete de presión (solo el brazalete)","exento"],
+  ["Camilla o mesa de exploración","exento"], ["Limpiador ultrasónico de instrumental","exento"],
+  ["Láser dermatológico o quirúrgico (CO2, fraccionado, Q-switched)","medico"], ["HIFU / ultrasonido focalizado","medico"],
+  ["Radiofrecuencia con microagujas","medico"], ["Microneedling eléctrico (dermapen)","medico"], ["Criolipólisis","medico"],
+  ["Electrocauterio / electrobisturí","medico"], ["Autoclave / esterilizador","medico"], ["Baumanómetro digital","medico"],
+  ["Unidad dental / lámpara de fotocurado","medico"], ["Equipo de rayos X dental","medico"], ["Otro","estetico"],
 ];
-const APARATO_TXT = {req:"Requiere registro sanitario", no:"No requiere registro (exento)", ver:"Verificar si requiere registro"};
-function aparatoEstatus(tipo){ const x = APARATO_CAT.find(a=>a[0]===tipo); return x ? x[1] : null; }
+// Nombres usados en visitas anteriores
+const APARATO_ALIAS = {"Radiofrecuencia":"Radiofrecuencia corporal o facial (sin agujas)", "Carboxiterapia (CO2)":"Carboxiterapia (Carbox)",
+  "Láser (depilación, dermatológico o quirúrgico)":"Láser dermatológico o quirúrgico (CO2, fraccionado, Q-switched)"};
+const APARATO_GRUPO_TXT = {
+  exento:"No requiere registro: exento por el Acuerdo del DOF del 7 de julio de 2025. No hace falta pedir documento.",
+  estetico:"Equipo estético no invasivo: basta con registro sanitario, oficio de COFEPRIS de no requerimiento del modelo, o manual/ficha donde el fabricante declara uso estético.",
+  medico:"Equipo médico o invasivo: requiere registro sanitario.",
+};
+const EQUIPO_DOCS = ["Registro sanitario","Oficio de no requerimiento","Manual o ficha con uso estético","Ninguno"];
+function registroCapturado(v){ const t = String(v||"").trim(); return !!t && !/^(no\b|n\/?a\b|sin\b|ninguno|pendiente|en tr[aá]mite|tr[aá]mite|desconoc)/i.test(t); }
+function aparatoGrupo(tipo){ const t = APARATO_ALIAS[tipo] || tipo; const x = APARATO_CAT.find(a=>a[0]===t); return x ? x[1] : (tipo ? "estetico" : null); }
+/* Semáforo de un equipo: verde (en orden), amarillo (pedir documento, sujeto a revisión), rojo (requiere registro y no lo tiene). */
+function equipoSemaforo(campos){
+  campos = campos || {};
+  const grupo = aparatoGrupo(campos.tipoEquipo) || "estetico";
+  const doc = campos.documento || (registroCapturado(campos.registroSanitario) ? "Registro sanitario" : "");
+  const usoMed = campos.usoMedico==="Sí";
+  if(grupo==="exento") return {color:"verde", txt:"No requiere registro (exento por el Acuerdo DOF 07-07-2025)", grupo};
+  if(doc==="Registro sanitario") return {color:"verde", txt:"Con registro sanitario", grupo};
+  if(grupo==="medico" || usoMed) return {color:"rojo", grupo,
+    txt: usoMed && grupo!=="medico" ? "Se usa con fin médico: requiere registro sanitario y no lo tiene" : "Equipo médico o invasivo: requiere registro sanitario y no lo tiene",
+    accion:"Pedir al proveedor el registro sanitario del equipo y guardar copia en la carpeta de equipos. Mientras no lo tenga, amerita suspender su uso; a criterio de la clínica, resolverlo en un plazo máximo de 30 días."};
+  if(doc==="Oficio de no requerimiento") return {color:"verde", txt:"Con oficio de COFEPRIS de no requerimiento (debe corresponder a la marca y modelo)", grupo};
+  if(doc==="Manual o ficha con uso estético") return {color:"verde", txt:"Uso estético declarado por el fabricante (manual o ficha)", grupo};
+  return {color:"amarillo", grupo, txt:"Pedir al proveedor el oficio de no requerimiento o la ficha de uso estético"};
+}
+const SEM_HEX = {verde:"#2E7D4F", amarillo:"#B8860B", rojo:"#B3261E"};
 async function ofrecerHallazgoEquipo(evaluacionId, campos, parentId){
-  const st = aparatoEstatus(campos.tipoEquipo);
-  if(st!=="req" || (campos.registroSanitario||"").trim()) return false;
-  const c = await askChoice(`${campos.equipo||campos.tipoEquipo} requiere registro sanitario y no se capturó el número. ¿Crear hallazgo?`, [{v:1,label:"Sí, crear hallazgo"},{v:0,label:"Ahora no"}], o=>o.label);
+  const sem = equipoSemaforo(campos);
+  if(sem.color!=="rojo") return false;
+  const nombre = campos.equipo || campos.tipoEquipo;
+  const c = await askChoice(`${nombre}: ${sem.txt}. ¿Crear hallazgo?`, [{v:1,label:"Sí, crear hallazgo"},{v:0,label:"Ahora no"}], o=>o.label);
   if(!c || !c.v) return false;
-  await flagComoHallazgo(evaluacionId, "equipo", campos.equipo || campos.tipoEquipo,
-    `${campos.equipo || campos.tipoEquipo}${campos.marca?" ("+campos.marca+(campos.modelo?" "+campos.modelo:"")+")":""} no cuenta con registro sanitario comprobable.`,
-    "coleccion_item_id", parentId,
-    {categoria:"Equipamiento y dispositivos médicos", accion:"Solicitar al proveedor el número y la copia del registro sanitario del equipo; si no lo tiene, suspender su uso hasta regularizarlo."});
+  await flagComoHallazgo(evaluacionId, "equipo", nombre,
+    `${nombre}${campos.marca?" ("+campos.marca+(campos.modelo&&!/^no visible$/i.test(campos.modelo)?" "+campos.modelo:"")+")":""}: ${sem.txt.charAt(0).toLowerCase()+sem.txt.slice(1)}.`,
+    "coleccion_item_id", parentId, {categoria:"Equipamiento y dispositivos médicos", accion: sem.accion});
   return true;
+}
+/* Un solo punto (prioridad baja) para todos los equipos estéticos sin documento de respaldo. */
+const EQ_DOCS_MARK = "Equipos estéticos sin documento de respaldo";
+async function syncHallazgoEquiposDocs(ev, equiposSem, manualHallazgos){
+  if(!esAdmin()) return;
+  const amar = equiposSem.filter(e=>e.sem.color==="amarillo");
+  const ex = manualHallazgos.find(h=>(h.descripcion||"").startsWith(EQ_DOCS_MARK));
+  if(!amar.length){
+    if(ex && (ex.estatus_accion||"pendiente")==="pendiente"){ await persistEntity("hallazgos", ex.id, "DELETE", {}); manualHallazgos.splice(manualHallazgos.indexOf(ex),1); }
+    return;
+  }
+  const desc = `${EQ_DOCS_MARK} (${amar.length}): ${amar.map(e=>e.nombre).join(", ")}.`;
+  if(ex){ if(ex.descripcion!==desc){ await persistEntity("hallazgos", ex.id, "UPDATE", {descripcion:desc}); ex.descripcion = desc; } return; }
+  const row = {evaluacion_id: ev.id, origen:"libre", categoria:"Equipamiento y dispositivos médicos", descripcion: desc,
+    fundamento:"LGS arts. 262 y 376; Acuerdo DOF 07-07-2025. La exención de cada modelo se acredita con oficio de COFEPRIS o con la finalidad estética declarada por el fabricante.",
+    impacto:1, probabilidad:2, prioridad:"baja", estatus_accion:"pendiente",
+    accion:"Pedir al proveedor, para cada equipo, el oficio de COFEPRIS de no requerimiento de ese modelo o el manual/ficha donde el fabricante declara uso estético, y guardarlo en la carpeta de equipos.",
+    clasificacion_id: await getClasifSinClasificar(), created_by: state.profile && state.profile.id};
+  const id = newId();
+  const r = await persistEntity("hallazgos", id, "CREATE", row);
+  if(r.ok || r.queued) manualHallazgos.push({...row, id});
 }
 const COLLECTION_SCHEMAS = {
   personal: {label:"Personal", icon:"🧑‍⚕️", singular:"persona", titleField:"nombre", fields:[
@@ -304,7 +368,9 @@ const COLLECTION_SCHEMAS = {
   ]},
   equipo: {label:"Equipamiento", icon:"🩺", singular:"equipo", titleField:"equipo", fields:[
     {key:"equipo",label:"Equipo",type:"text"},{key:"tipoEquipo",label:"Tipo de equipo",type:"select",options:APARATO_CAT.map(x=>x[0])},
-    {key:"registroSanitario",label:"Número de registro sanitario (etiqueta o manual)",type:"text"},
+    {key:"documento",label:"¿Qué documento mostraron?",type:"select",options:EQUIPO_DOCS},
+    {key:"registroSanitario",label:"Número del registro u oficio (si lo hay)",type:"text"},
+    {key:"usoMedico",label:"¿Se usa para tratar una enfermedad o se anuncia con efecto médico?",type:"select",options:["No","Sí"]},
     {key:"marca",label:"Marca",type:"text"},{key:"modelo",label:"Modelo",type:"text"},
     {key:"numeroSerie",label:"Número de serie",type:"text"},{key:"area",label:"Área",type:"text"},
     {key:"mantenimiento",label:"Mantenimiento",type:"text"},{key:"documentacion",label:"Documentación",type:"textarea"},
@@ -621,13 +687,22 @@ function camposPorNivel(fields){
 function openItemForm(evaluacionId, schema, existing){
   setTimeout(()=>{ const sel = document.querySelector('.modal [data-f="tipoEquipo"], [data-f="tipoEquipo"]'); if(!sel) return;
     let h = document.getElementById("equipo-hint"); if(!h){ h = document.createElement("div"); h.id = "equipo-hint"; h.className = "small"; h.style.margin = "4px 0 8px"; sel.insertAdjacentElement("afterend", h); }
-    const pinta = () => { const st = aparatoEstatus(sel.value); h.innerHTML = st ? `<b style="color:${st==="req"?"#B3261E":st==="no"?"#2E7D4F":"#B8860B"}">${APARATO_TXT[st]}</b>` : ""; };
-    sel.addEventListener("change", pinta); pinta(); }, 50);
+    const root = sel.closest(".modal") || document;
+    const val = k => { const el = root.querySelector(`[data-f="${k}"]`); return el ? el.value : ""; };
+    const pinta = () => {
+      if(!sel.value){ h.innerHTML = ""; return; }
+      const g = aparatoGrupo(sel.value); const sem = equipoSemaforo({tipoEquipo:sel.value, documento:val("documento"), registroSanitario:val("registroSanitario"), usoMedico:val("usoMedico")});
+      h.innerHTML = `<div class="muted">${esc(APARATO_GRUPO_TXT[g]||"")}</div><b style="color:${SEM_HEX[sem.color]}">${sem.color==="verde"?"🟢":sem.color==="amarillo"?"🟡":"🔴"} ${esc(sem.txt)}</b>`;
+      const docEl = root.querySelector('[data-f="documento"]'); if(docEl){ const off = g==="exento"; docEl.disabled = off; if(off) docEl.value = ""; }
+    };
+    ["tipoEquipo","documento","registroSanitario","usoMedico"].forEach(k=>{ const el = root.querySelector(`[data-f="${k}"]`); if(el){ el.addEventListener("change", pinta); el.addEventListener("input", pinta); } });
+    pinta(); }, 50);
   return new Promise((resolve)=>{
     const fieldsHtml = camposPorNivel(schema.fields).map(f=>{
       const val = (existing && existing.campos && existing.campos[f.key]) || "";
       if(f.type==="textarea") return `<label>${esc(f.label)}</label><textarea data-f="${f.key}">${esc(val)}</textarea>`;
-      if(f.type==="select") return `<label>${esc(f.label)}</label><select data-f="${f.key}"><option value="">Selecciona</option>${f.options.map(o=>`<option value="${esc(o)}" ${val===o?"selected":""}>${o}</option>`).join("")}</select>`;
+      if(f.type==="select"){ const opts = (val && !f.options.includes(val)) ? [val, ...f.options] : f.options; // conserva valores de visitas anteriores
+        return `<label>${esc(f.label)}</label><select data-f="${f.key}"><option value="">Selecciona</option>${opts.map(o=>`<option value="${esc(o)}" ${val===o?"selected":""}>${esc(o)}</option>`).join("")}</select>`; }
       return `<label>${esc(f.label)}</label><input type="text" data-f="${f.key}" value="${esc(val)}">`;
     }).join("");
     const sheet = openModal(`
@@ -1068,8 +1143,10 @@ async function ensureHallazgoRow(evaluacionId, f, hallazgosByCriterio){
   return created;
 }
 
-function computeDiagnostico(activos, respuestas, manualHallazgos){
+function computeDiagnostico(activos, respuestas, manualHallazgos, extra){
   manualHallazgos = manualHallazgos || [];
+  extra = extra || {};
+  const extraAreas = extra.areas || {};
   const findings = [];
   let contestados = 0;
   activos.forEach(cr=>{
@@ -1135,22 +1212,86 @@ function computeDiagnostico(activos, respuestas, manualHallazgos){
   findings.forEach(f=>{ const pa = porArea[f.criterio.modulo]; if(!pa) return; pa.raw += PRIORITY_POINTS[f.risk.prioridad]||0; pa.n = (pa.n||0)+1; if(f.risk.prioridad==="CRITICA") pa.crit = (pa.crit||0)+1; });
   const areaRows = Object.keys(porArea).map(mod=>{
     const {raw:r2, denom:d2, n:nH, crit:nCr, ok:nOk} = porArea[mod];
-    const cumpl = ((nOk||0)+(nH||0)) ? Math.round(100*(nOk||0)/((nOk||0)+(nH||0))) : null;
+    // Base del porcentaje del área: lo marcado en la lista + lo revisado en el levantamiento
+    // (equipos) o en la auditoría (elementos de expediente). Sin nada en orden que medir, el
+    // área no muestra porcentaje (null) sino el número de puntos por corregir.
+    const ex = extraAreas[mod];
+    let cumpl, baseTxt = "";
+    if(ex && ex.reemplaza && (ex.ok+ex.mal)>0){ cumpl = Math.round(100*ex.ok/(ex.ok+ex.mal)); baseTxt = ex.txt||""; }
+    else {
+      const okA = (nOk||0) + ((ex && ex.ok) || 0);
+      cumpl = okA>0 ? Math.round(100*okA/(okA+(nH||0))) : null;
+      if(ex && ex.txt && okA>0) baseTxt = ex.txt;
+    }
     const pct = d2>0 ? Math.round(100*r2/(d2*10)) : 0;
     // Un área con un punto crítico nunca se pinta en verde ni amarillo.
     const color = (pct>=71 || nCr>0) ? "#B3261E" : pct>=41 ? "#B8860B" : (pct>=16 || nH>0) ? "#C9A227" : "#2E7D4F";
-    return {modulo:mod, percent:pct, color, hallazgos:nH||0, criticos:nCr||0, cumplimiento:cumpl};
-  }).filter(a=>a.cumplimiento!==null).sort((a,b)=>(b.criticos-a.criticos)||(b.percent-a.percent));
+    return {modulo:mod, percent:pct, color, hallazgos:nH||0, criticos:nCr||0, cumplimiento:cumpl, baseTxt};
+  }).filter(a=>a.cumplimiento!==null || a.hallazgos>0).sort((a,b)=>(b.criticos-a.criticos)||(b.percent-a.percent));
   // Cumplimiento = puntos que cumplen ÷ (puntos que cumplen + puntos por corregir). Más alto = mejor.
   const nOkTotal = activos.filter(cr=>respuestas[cr.id] && respuestas[cr.id].estatus==="cumple").length;
-  const cumplimiento = (nOkTotal + findings.length) ? Math.round(100*nOkTotal/(nOkTotal+findings.length)) : null;
+  // Lo revisado en orden incluye los equipos del levantamiento sin hallazgo (extra.okGlobal).
+  const nOkVisita = nOkTotal + (extra.okGlobal||0);
+  const cumplimiento = (nOkVisita + findings.length) ? Math.round(100*nOkVisita/(nOkVisita+findings.length)) : null;
 
-  return {findings, contestados, percent, band, bandNote, nCrit, nAlta, areaRows, cumplimiento, nOkTotal};
+  return {findings, contestados, percent, band, bandNote, nCrit, nAlta, areaRows, cumplimiento, nOkTotal, nOkVisita};
 }
 
 // Convierte una fila de evaluacion_criterios_snapshot (la fuente única de verdad
 // del universo de una evaluación, desde Integración Fase 1) a la misma forma que
 // el resto del frontend ya espera de un criterio, para no reescribir el renderizado.
+/* Plural en español: pl(3,"punto") -> "3 puntos"; pl(1,"punto crítico","puntos críticos"). */
+function pl(n, sing, plur){ return `${n} ${n===1 ? sing : (plur || sing+"s")}`; }
+/* Fecha legible: 2026-11-18 -> 18 de noviembre de 2026. */
+function fechaLarga(iso){
+  if(!iso) return "—"; const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/); if(!m) return String(iso);
+  const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  return `${+m[3]} de ${MESES[+m[2]-1]} de ${m[1]}`;
+}
+/* Referencia de expediente para reportes: nunca el nombre completo del paciente.
+   "114 María del Carmen" -> "114 · M.C."; "Lady Laura Reyes" -> "L.L.R."; "Exp 7" se respeta. */
+function expaRefPrivada(ref){
+  const r = String(ref||"").trim(); if(!r) return "—";
+  const folio = (r.match(/\d[\w\-\/]*/)||[])[0] || "";
+  const palabras = r.replace(/\d[\w\-\/]*/g," ").split(/\s+/).filter(w=>w && !/^(de|del|la|las|los|y|exp\.?|expediente|folio)$/i.test(w));
+  const ini = palabras.map(w=>/^([A-Za-zÁÉÍÓÚÑáéíóúñ]\.?)+$/.test(w) && w.length<=6 && /\./.test(w) ? w.toUpperCase() : w[0].toUpperCase()+".").join("");
+  return [folio, ini].filter(Boolean).join(" · ") || r;
+}
+/* Bases extra para el % por área: equipos del levantamiento y auditoría de expedientes. */
+async function diagExtraBases(ev, manualHallazgos){
+  const out = {areas:{}, okGlobal:0, equipos:[]};
+  try{
+    const tipoIds = await ensureTipoIds();
+    const collR = await cachedRead("ev:"+ev.id+":coll_all", ()=>sb.from("colecciones_items").select("*").eq("evaluacion_id", ev.id).order("created_at"));
+    const equipos = (collR.data||[]).filter(x=>x.tipo_id===tipoIds["c:equipo"]);
+    out.equipos = equipos.map(x=>({id:x.id, nombre:(x.campos&&x.campos.equipo||"").trim() || (x.campos&&x.campos.tipoEquipo) || "Equipo", tipo:(x.campos&&x.campos.tipoEquipo)||"", sem: equipoSemaforo(x.campos)}));
+    if(equipos.length){
+      const ok = out.equipos.filter(e=>e.sem.color==="verde").length;
+      out.areas["Equipamiento y dispositivos médicos"] = {ok, mal: equipos.length-ok, reemplaza:true, txt:`${ok} de ${equipos.length} equipos en orden`};
+      out.okGlobal += ok;
+    }
+  }catch(e){ console.warn("Bases de equipos no disponibles:", e); }
+  try{
+    const reg = await expaCargar(ev.id);
+    const exps = (reg && reg.campos && reg.campos.expedientes) || [];
+    if(exps.length){
+      const evF = ev.facts ? ev : ((await sb.from("evaluaciones").select("facts").eq("id", ev.id).single()).data || ev);
+      const items = expaItems({facts: evF.facts||{}}).filter(it=>!it.rec);
+      let ok=0, mal=0;
+      exps.forEach(e=>items.forEach(it=>{ const v=(e.r||{})[it.k]; if(v==="si") ok++; else if(v==="no") mal++; }));
+      if(ok+mal) out.areas["Expediente clínico"] = {ok, mal, reemplaza:true, txt:`elementos obligatorios completos en ${pl(exps.length,"expediente revisado","expedientes revisados")}`};
+    }
+  }catch(e){ console.warn("Base de auditoría no disponible:", e); }
+  return out;
+}
+/* Tipo de requisito para el reporte: deja claro si es ley, condicionado o recomendación. */
+function tipoRequisitoTxt(f){
+  if(f.origen==="libre" && String(f.criterio.requisito||"").startsWith(EQ_DOCS_MARK)) return "Criterio sujeto a revisión (documento de respaldo del equipo)";
+  if(f.origen==="libre") return f.criterio.fundamento_legal ? "Hallazgo de visita con fundamento legal" : "Recomendación (buena práctica, sin fundamento legal específico)";
+  const a = f.criterio.aplicabilidad;
+  return a==="obligatorio" ? "Obligación legal" : a==="condicionado" ? "Obligación condicionada (aplica por los servicios que ofrece)" : a==="revision" ? "Criterio sujeto a revisión" : a==="buena_practica" ? "Buena práctica (no es obligación legal)" : "";
+}
+
 function snapshotRowToCriterio(row){
   return {
     id: row.criterio_id, modulo: row.modulo, requisito: row.requisito, descripcion: row.descripcion,
@@ -3573,7 +3714,10 @@ async function renderDiagnosticoEvaluacion(){
   const hallazgosByCriterio = {};
   const manualHallazgos = [];
   (manualRes.data||[]).forEach(h=>{ if(h.origen==="libre") manualHallazgos.push(h); else if(h.criterio_id) hallazgosByCriterio[h.criterio_id]=h; });
-  const diag = computeDiagnostico(activos, respuestas, manualHallazgos);
+  const extraBases = await diagExtraBases(ev, manualHallazgos);
+  try{ await syncHallazgoEquiposDocs(ev, extraBases.equipos||[], manualHallazgos); }catch(eqErr){ console.warn("No se pudo actualizar el punto de equipos:", eqErr); }
+  const diag = computeDiagnostico(activos, respuestas, manualHallazgos, extraBases);
+  diag.equipos = extraBases.equipos || [];
   const h1El = document.querySelector(".topbar h1");
   const depDiag = detectDependencia(diag.findings.map(f=>f.criterio?.id||""));
   if(h1El && depDiag.codigo!=="cofepris") h1El.textContent = depDiag.screenTitle;
@@ -3623,17 +3767,21 @@ async function renderDiagnosticoEvaluacion(){
         ${gaugeSvg}
         <div>
           <div style="font-weight:700;color:var(--navy-900);font-size:17px">Riesgo ${esc(diag.band.label)}</div>
-          <div class="muted small">Cumplimiento de lo revisado: ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} · ${diag.nOkTotal} punto(s) en orden, ${diag.findings.length} por corregir</div>
-          ${diag.nCrit ? `<div class="small" style="color:#B3261E;margin-top:4px">${diag.nCrit} punto(s) crítico(s): son los que pueden causar una suspensión.</div>` : (diag.bandNote ? `<div class="small" style="color:#B3261E;margin-top:4px">${esc(diag.bandNote)}</div>` : "")}
+          <div class="muted small">Cumplimiento de lo revisado: ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} · ${pl(diag.nOkVisita,"punto en orden","puntos en orden")}, ${diag.findings.length} por corregir</div>
+          ${diag.nCrit ? `<div class="small" style="color:#B3261E;margin-top:4px">${pl(diag.nCrit,"punto crítico","puntos críticos")}: ${diag.nCrit===1?"es el que puede":"son los que pueden"} causar una suspensión.</div>` : (diag.bandNote ? `<div class="small" style="color:#B3261E;margin-top:4px">${esc(diag.bandNote)}</div>` : "")}
         </div>
       </div>
       <p class="muted small" style="margin-top:10px;line-height:1.4">El círculo es el porcentaje de lo revisado que está en orden (más alto es mejor). El nivel de riesgo lo marca la gravedad de lo que falta: un solo punto crítico pesa más que muchos puntos en orden. No determina cumplimiento legal ni autorización sanitaria.</p>
     </div>
     ${diag.areaRows.length ? `<div class="card"><div class="section-title">Cumplimiento por área</div><p class="muted small" style="margin:-4px 0 8px">La barra es lo que está en orden; el color es el riesgo de lo que falta.</p>${diag.areaRows.map(a=>`
       <div class="area-bar-row">
-        <div class="abr-top"><span>${esc(a.modulo)}${a.criticos?` <span style="color:#B3261E;font-size:12px">· ${a.criticos} crítico(s)</span>`:""}</span><span style="font-weight:600">${a.cumplimiento}%</span></div>
-        <div class="area-bar-track"><div class="area-bar-fill" style="width:${Math.max(a.cumplimiento,3)}%;background:${a.color}"></div></div>
+        <div class="abr-top"><span>${esc(a.modulo)}${a.criticos?` <span style="color:#B3261E;font-size:12px">· ${pl(a.criticos,"crítico","críticos")}</span>`:""}</span><span style="font-weight:600">${a.cumplimiento===null ? `<span style="color:${a.color}">${a.hallazgos} por corregir</span>` : a.cumplimiento+"%"}</span></div>
+        ${a.cumplimiento===null ? `<div class="muted small" style="margin-top:2px">Solo se registraron puntos por corregir; no hubo nada que medir como en orden.</div>` : `<div class="area-bar-track"><div class="area-bar-fill" style="width:${a.cumplimiento}%;background:${a.color}"></div></div>`}
+        ${a.baseTxt ? `<div class="muted small" style="margin-top:2px">Incluye ${esc(a.baseTxt)}.</div>` : ""}
       </div>`).join("")}</div>` : ""}
+    ${(diag.equipos||[]).length ? `<div class="card"><div class="section-title">Sus equipos (${diag.equipos.length})</div>
+      <p class="muted small" style="margin:-4px 0 8px">🟢 en orden · 🟡 pedir documento al proveedor · 🔴 requiere registro y no lo tiene</p>
+      ${diag.equipos.map(e=>`<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)"><span style="width:10px;height:10px;border-radius:50%;background:${SEM_HEX[e.sem.color]};margin-top:5px;flex:none"></span><div><b style="font-size:14px">${esc(e.nombre)}</b><div class="muted small">${esc(e.sem.txt)}</div></div></div>`).join("")}</div>` : ""}
     <div class="card">
       <div class="section-title">Puntos por corregir ${diag.findings.length ? `(${diag.findings.length})` : ""}</div>
       ${diag.findings.length===0 ? `<p class="muted small">No se identificaron hallazgos con lo contestado hasta ahora.</p>` : (()=>{
@@ -3696,7 +3844,7 @@ async function renderDiagnosticoEvaluacion(){
           <span class="fc2-tag ${PRIORITY_CLS[f.risk.prioridad]}">${PRIORITY_LABEL[f.risk.prioridad]} · ${esc(f.criterio.modulo)}</span>
           <p class="fc2-title ${done?'done':''}">${esc(f.criterio.requisito)}</p>
           <div class="fc2-meta">${f.origen==="libre"?"Hallazgo de visita":"Estatus: "+STATUS_TEXT[f.estatus]}${f.nota?" — "+esc(f.nota):""}</div>
-          ${mode==="interno" ? `<div class="fc2-meta"><b>Fundamento:</b> ${esc(f.criterio.fundamento_legal||"—")}</div>` : ""}
+          <div class="fc2-meta"><b>${esc(tipoRequisitoTxt(f)||"Fundamento")}</b>${f.criterio.fundamento_legal ? " · "+esc(f.criterio.fundamento_legal) : (mode==="interno" ? " · <span style='color:#B3261E'>sin fundamento capturado</span>" : "")}</div>
           <div class="fc2-action-row">
             <div class="fc2-photos" id="evid-find-${f.criterio.id}"></div>
             <div class="fc2-action-box">
@@ -4277,9 +4425,9 @@ async function generarPdfDiagnostico(cache, mode){
     doc.setFillColor(238,238,235); doc.rect(margin,y,w,7,"F"); doc.setFillColor(...hexToRgb(color)); doc.rect(margin,y,w*pct/100,7,"F"); y+=17; }
 
   { const depPortada = detectDependencia((diag.findings||[]).map(f=>f.criterio?.id||""));
-    drawPortadaPdf(doc, {titulo:depPortada.pdfTitle, cliente:nombreExpediente,
+    drawPortadaPdf(doc, {titulo:depPortada.pdfTitle, cliente:datosEst.nombreComercial||nombreExpediente,
       subtitulo: mode==="interno" ? "Registro interno del evaluador" : "Diagnóstico y plan de acción",
-      detalle:`Fecha de visita: ${ev.fecha_visita||"—"}`, detalle2:[datosEst.domicilio, datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")}); }
+      detalle:`Fecha de visita: ${fechaLarga(ev.fecha_visita)}`, detalle2:[datosEst.domicilio, datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")}); }
   doc.setFillColor(...NAVY); doc.rect(0,0,pageW,110,"F");
   // Logo -- insignia blanca en la esquina del encabezado, mismo tratamiento que en la app
   try{
@@ -4290,11 +4438,11 @@ async function generarPdfDiagnostico(cache, mode){
   doc.setFont("helvetica","bold"); doc.setFontSize(19); doc.setTextColor(255,255,255);
   doc.text(dep.pdfTitle, margin, 52);
   doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(230,230,225);
-  doc.text(nombreExpediente||"(sin nombre)", margin, 74);
+  doc.text(datosEst.nombreComercial||nombreExpediente||"(sin nombre)", margin, 74);
   doc.setFontSize(9.5); doc.setTextColor(216,193,150);
   doc.text("Elaborado por: Saúl Flores | Elementos Financieros", margin, 92);
   y = 135; doc.setTextColor(...INK);
-  body(`Fecha de visita: ${ev.fecha_visita||"—"}    Nivel: ${ev.nivel_checkup}`, {size:10});
+  body(`Fecha de visita: ${fechaLarga(ev.fecha_visita)}    Nivel: ${ev.nivel_checkup}`, {size:10});
   datosEstLineas(datosEst).forEach(l=> body(l, {size:10, color:SOFT, lh:14}));
   y+=4; rule();
 
@@ -4303,10 +4451,10 @@ async function generarPdfDiagnostico(cache, mode){
   doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.setTextColor(...NAVY);
   doc.text(`Riesgo ${diag.band.label}`, margin+72, y+22);
   doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...SOFT);
-  doc.text(`Cumplimiento de lo revisado: ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} (${diag.nOkTotal} en orden, ${diag.findings.length} por corregir)`, margin+72, y+35);
-  if(diag.nCrit){ doc.setFontSize(8.5); doc.setTextColor(179,38,30); doc.text(`${diag.nCrit} punto(s) critico(s): son los que pueden causar una suspension.`, margin+72, y+48); doc.setTextColor(...INK); }
+  doc.text(`Cumplimiento de lo revisado: ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} (${diag.nOkVisita} en orden, ${diag.findings.length} por corregir)`, margin+72, y+35);
+  if(diag.nCrit){ doc.setFontSize(8.5); doc.setTextColor(179,38,30); doc.text(`${pl(diag.nCrit,"punto crítico","puntos críticos")}: ${diag.nCrit===1?"es el que puede":"son los que pueden"} causar una suspensión.`, margin+72, y+48); doc.setTextColor(...INK); }
   y += 78; // separación real contra el borde inferior del círculo (radio 30)
-  body("El circulo es el porcentaje de lo revisado que esta en orden (mas alto es mejor). El nivel de riesgo lo marca la gravedad de lo que falta: un solo punto critico pesa mas que muchos puntos en orden. No determina cumplimiento legal ni autorizacion sanitaria.", {size:10, color:SOFT});
+  body("El círculo es el porcentaje de lo revisado que está en orden (más alto es mejor). El nivel de riesgo lo marca la gravedad de lo que falta: un solo punto crítico pesa más que muchos puntos en orden. No determina cumplimiento legal ni autorización sanitaria.", {size:10, color:SOFT});
   y+=6; rule();
 
   // Prioridad inmediata (solo STPS): índice corto de lo crítico, con quién lo resuelve --
@@ -4342,7 +4490,14 @@ async function generarPdfDiagnostico(cache, mode){
   if(diag.areaRows.length){
     heading("Cumplimiento por área", 13);
     body("La barra es lo que está en orden; el color es el riesgo de lo que falta.", {size:9, color:SOFT, lh:12});
-    diag.areaRows.forEach(a=>bar(a.modulo + (a.criticos?` (${a.criticos} crítico${a.criticos===1?"":"s"})`:""), a.cumplimiento, a.color, maxW));
+    diag.areaRows.forEach(a=>{
+      const lab = a.modulo + (a.criticos?` (${pl(a.criticos,"crítico","críticos")})`:"");
+      if(a.cumplimiento===null){
+        checkBreak(22); doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(...INK); doc.text(lab, margin, y);
+        doc.setFont("helvetica","bold"); doc.setTextColor(...hexToRgb(a.color)); doc.text(`${a.hallazgos} por corregir`, margin+maxW, y, {align:"right"}); doc.setTextColor(...INK); y+=16;
+      } else bar(lab, a.cumplimiento, a.color, maxW);
+      if(a.baseTxt){ y-=6; body(`Incluye ${a.baseTxt}.`, {size:8, color:SOFT, lh:11}); y+=2; }
+    });
     y+=4; rule();
   }
 
@@ -4362,6 +4517,24 @@ async function generarPdfDiagnostico(cache, mode){
     const idx = diag.findings.indexOf(peor);
     const antes = diag.findings.slice(0, idx).filter(f=>!esAud(f)).length;
     findingsPDF.splice(antes, 0, sint);
+  }
+  if((diag.equipos||[]).length){
+    heading(`Sus equipos (${diag.equipos.length})`, 13);
+    body("Verde: en orden. Amarillo: pedir documento al proveedor. Rojo: requiere registro sanitario y no lo tiene.", {size:9, color:SOFT, lh:12});
+    y += 2;
+    diag.equipos.forEach(e=>{
+      doc.setFont("helvetica","normal"); doc.setFontSize(9);
+      const tl = doc.splitTextToSize(e.sem.txt, maxW-200);
+      checkBreak(tl.length*11 + 8);
+      doc.setFillColor(...hexToRgb(SEM_HEX[e.sem.color])); doc.circle(margin+5, y-3, 4, "F");
+      doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.setTextColor(...INK);
+      doc.text(doc.splitTextToSize(e.nombre, 170)[0], margin+16, y);
+      doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...SOFT);
+      tl.forEach((l,k)=>doc.text(l, margin+196, y + k*11));
+      y += Math.max(1, tl.length)*11 + 5;
+    });
+    body("Base: Ley General de Salud arts. 262 y 376 y Acuerdo de listados de dispositivos médicos (DOF 07-07-2025). Los equipos estéticos no invasivos se respaldan con registro, oficio de COFEPRIS de no requerimiento del modelo o la finalidad estética declarada por el fabricante.", {size:8, color:SOFT, lh:10});
+    y += 4; rule();
   }
   heading(`Puntos por corregir (${findingsPDF.length})`, 13);
   if(findingsPDF.length===0) body("No se identificaron hallazgos con lo contestado.");
@@ -4397,7 +4570,10 @@ async function generarPdfDiagnostico(cache, mode){
     doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(...(doneF?SOFT:INK));
     doc.splitTextToSize(f.criterio.requisito, maxW-22).forEach(line=>{ checkBreak(13); doc.text(line, textX, y); y+=12; });
     body(f.origen==="libre" ? "Hallazgo de visita" : `Estatus: ${STATUS_TEXT[f.estatus]}${f.nota?" — "+f.nota:""}`, {size:10.5, indent:22, color:SOFT});
-    if(mode==="interno") body(`Fundamento: ${f.criterio.fundamento_legal||"—"}`, {size:10.5, indent:22, color:SOFT});
+    { const tipo = tipoRequisitoTxt(f);
+      if(tipo) body(tipo, {size:9, indent:22, color:NAVY, bold:true, lh:12});
+      if(f.criterio.fundamento_legal) body(`Fundamento: ${f.criterio.fundamento_legal}`, {size:9, indent:22, color:SOFT, lh:12});
+      else if(mode==="interno") body("Fundamento: — (sin capturar)", {size:9, indent:22, color:[179,38,30], lh:12}); }
     y += 2;
 
     // Foto (si hay) + caja de "Qué hacer" lado a lado
@@ -4432,7 +4608,7 @@ async function generarPdfDiagnostico(cache, mode){
     checkBreak(14);
     doc.setFillColor(240,240,236); doc.rect(textX, y-8, maxW-22, 14, "F");
     doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(...SOFT);
-    doc.text(`Responsable: ${h.responsable||"—"}     Fecha objetivo: ${h.fecha_objetivo||"—"}     Corrección: ${estatusActual.replace("_"," ")}`, textX+6, y+1);
+    doc.text(`Responsable: ${h.responsable||"—"}     Fecha objetivo: ${h.fecha_objetivo?fechaLarga(h.fecha_objetivo):"—"}     Corrección: ${estatusActual.replace("_"," ")}`, textX+6, y+1);
     y += 14;
     doc.setDrawColor(230,230,225); doc.line(margin, y, pageW-margin, y); y += 10;
   }
@@ -4451,11 +4627,11 @@ async function generarPdfDiagnostico(cache, mode){
     if(!findingsPDF.length){
       body(`Con lo revisado en la visita, su establecimiento no presenta puntos por corregir. Cumple ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} de lo revisado. Mantener la documentación vigente y las bitácoras al día es lo que sostiene este resultado en una verificación.`, {size:10.5, lh:15});
     } else {
-      body(`Con lo revisado en la visita, su clínica cumple ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} de lo revisado, pero su nivel de riesgo es ${String(diag.band.label).toLowerCase()} por la gravedad de lo que falta. Tiene ${pend.length} punto(s) pendientes por corregir: ${nC} crítico(s), ${nA} de prioridad alta y ${nM} de prioridad media o baja${corr?`, y ya corrigió ${corr}`:""}.`, {size:10.5, lh:15});
+      body(`Con lo revisado en la visita, su clínica cumple ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} de lo revisado, pero su nivel de riesgo es ${String(diag.band.label).toLowerCase()} por la gravedad de lo que falta. Tiene ${pl(pend.length,"punto pendiente","puntos pendientes")} por corregir: ${pl(nC,"crítico","críticos")}, ${nA} de prioridad alta y ${nM} de prioridad media o baja${corr?`, y ya corrigió ${corr}`:""}.`, {size:10.5, lh:15});
       y += 4;
       if(areasTop.length) body(`El riesgo se concentra en ${areasTop.map(x=>`${x.modulo} (${x.criticos ? x.criticos+" crítico"+(x.criticos===1?"":"s") : x.hallazgos+" por corregir"})`).join(", ").replace(/, ([^,]*)$/, " y $1")}. ${sinRiesgo.length?`En cambio, ${sinRiesgo.slice(0,3).join(", ").replace(/, ([^,]*)$/, " y $1")} ${sinRiesgo.length===1?"está":"están"} en orden.`:""}`, {size:10.5, lh:15});
       y += 4;
-      const urg = pend.filter(f=>f.risk.prioridad==="CRITICA").slice(0,3);
+      const urg = pend.filter(f=>f.risk.prioridad==="CRITICA");
       if(urg.length){
         body("Lo más urgente:", {bold:true, size:10.5, lh:15});
         urg.forEach(f=> body(`•  ${f.criterio.requisito}`, {size:10.5, lh:14, indent:8}));
@@ -4464,15 +4640,16 @@ async function generarPdfDiagnostico(cache, mode){
       body("Qué significa: en una visita de verificación, los puntos críticos son los que más exponen a la clínica a una sanción, como una multa o la suspensión de actividades. Los de prioridad alta y media suelen quedar como observaciones que deben corregirse en un plazo.", {size:10.5, lh:15});
       y += 4;
       body("Ruta sugerida:", {bold:true, size:10.5, lh:15});
-      if(nC) body(`•  Primeros 30 días: los ${nC} punto(s) crítico(s).`, {size:10.5, lh:14, indent:8});
-      if(nA) body(`•  Días 31 a 60: los ${nA} punto(s) de prioridad alta.`, {size:10.5, lh:14, indent:8});
-      if(nM) body(`•  Días 61 a 90: los ${nM} punto(s) restantes.`, {size:10.5, lh:14, indent:8});
+      if(nC) body(`•  De inmediato: ${nC===1?"el punto crítico":"los "+nC+" puntos críticos"}. Si un procedimiento no tiene la autorización que requiere, amerita suspenderlo mientras se regulariza; la decisión es de la clínica y el plazo sugerido para resolverlo es de 30 días.`, {size:10.5, lh:14, indent:8});
+      if(nA) body(`•  Primeros 30 días: ${nA===1?"el punto":"los "+nA+" puntos"} de prioridad alta.`, {size:10.5, lh:14, indent:8});
+      if(nM) body(`•  Días 31 a 90: ${nM===1?"el punto restante":"los "+nM+" puntos restantes"}.`, {size:10.5, lh:14, indent:8});
       body("•  Al terminar, una visita de seguimiento verifica cada corrección y actualiza este índice.", {size:10.5, lh:14, indent:8});
     }
     y += 6; rule();
   }catch(anErr){ console.warn("No se pudo generar el análisis:", anErr); }
 
   // ---------- Auditoría de expedientes clínicos (si se hizo en la visita) ----------
+  let siguientePaso = null;
   try{
     const regExp = await expaCargar(ev.id);
     const expsA = (regExp && regExp.campos && regExp.campos.expedientes) || [];
@@ -4483,15 +4660,16 @@ async function generarPdfDiagnostico(cache, mode){
       const fallanA = resA.filter(x=>x.fallan).sort((p,q)=>q.fallan/q.evaluados - p.fallan/p.evaluados);
       checkBreak(70);
       heading(`Auditoría de expedientes clínicos (${expsA.length} revisado${expsA.length===1?"":"s"})`, 13);
-      body("Revisamos una muestra de expedientes reales, identificados solo por folio o iniciales. Para cada punto se indica en cuántos expedientes falta y cómo corregirlo.", {size:10, color:SOFT, lh:13});
+      body("Revisamos una muestra de expedientes reales. Para proteger a los pacientes, aquí solo aparecen su folio o iniciales. Para cada punto se indica en cuántos expedientes falta y cómo corregirlo.", {size:10, color:SOFT, lh:13});
       y += 6;
       // Semáforo por expediente (solo cuentan los elementos obligatorios)
       expsA.forEach(e=>{
         const nO = expaFallasObl(itemsA, e).length;
         checkBreak(16);
         doc.setFillColor(...hexToRgb(expaColorExp(nO))); doc.circle(margin+5, y-3.5, 4, "F");
-        doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(...INK); doc.text(e.ref, margin+16, y);
-        doc.setFont("helvetica","normal"); doc.setTextColor(...SOFT); doc.text(nO ? `${nO} elemento(s) obligatorio(s) faltante(s)` : "completo en lo obligatorio", margin+16+doc.getTextWidth(e.ref)+10, y);
+        const refP = expaRefPrivada(e.ref);
+        doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(...INK); doc.text(refP, margin+16, y);
+        doc.setFont("helvetica","normal"); doc.setTextColor(...SOFT); doc.text(nO ? `${pl(nO,"elemento obligatorio faltante","elementos obligatorios faltantes")}` : "completo en lo obligatorio", margin+16+doc.getTextWidth(refP)+10, y);
         y += 15;
       });
       body("Verde: completo. Amarillo: 1 o 2 faltas. Rojo: 3 o más.", {size:8.5, color:SOFT, lh:11});
@@ -4525,6 +4703,7 @@ async function generarPdfDiagnostico(cache, mode){
       [...new Set(itemsA.map(it=>it.grupo))].forEach(g=>{
         checkBreak(30);
         body(g, {bold:true, size:10.5, lh:15});
+        if(g===EXPA_ITEMS.quirurgico.label) body("Aplica solo si el establecimiento cuenta con licencia sanitaria para actos quirúrgicos. Sin licencia, estos procedimientos no deben realizarse.", {size:8.5, color:[179,38,30], lh:11, indent:4});
         [["Obligatorio", itemsA.filter(it=>it.grupo===g && !it.rec)], ["Recomendado", itemsA.filter(it=>it.grupo===g && it.rec)]].forEach(([etq, lista])=>{
           if(!lista.length) return;
           body(etq.toUpperCase(), {bold:true, size:8, color: etq==="Obligatorio" ? [179,38,30] : SOFT, lh:11, indent:4});
@@ -4541,25 +4720,28 @@ async function generarPdfDiagnostico(cache, mode){
         const pls = expaPlantillas({facts: evFacts.facts || {}});
         const NOMBRES = {base:"medicina general y de especialidad", estetica:"medicina estética", dental:"odontología", quirurgico:"cirugía y procedimientos con anestesia"};
         const esp = pls.filter(x=>NOMBRES[x]).map(x=>NOMBRES[x]);
-        const CONT = {base:"historia clínica y nota de evolución conforme a la NOM-004", estetica:"consentimientos por procedimiento estético, bitácora de multidosis y autorización de uso de fotografías", dental:"historia clínica estomatológica con odontograma y periodontograma, y consentimientos conforme a la NOM-013", quirurgico:"notas pre y postoperatorias, valoración y registro anestésico, y consentimientos de cirugía y anestesia"};
+        const CONT = {base:"historia clínica y nota de evolución conforme a la NOM-004", estetica:"consentimientos por procedimiento estético, bitácora de multidosis y autorización de uso de fotografías", dental:"historia clínica estomatológica con odontograma y periodontograma, y consentimientos conforme a la NOM-013", quirurgico:"notas pre y postoperatorias, valoración y registro anestésico, y consentimientos de cirugía y anestesia (para usarse una vez que se cuente con la licencia sanitaria quirúrgica)"};
         const contenido = pls.filter(x=>CONT[x]).map(x=>CONT[x]).join("; ");
         const txt = `Paquete de formatos de expediente clínico de Elementos Financieros para ${esp.join(", ")}: ${contenido}. Incluye versión física lista para imprimir y versión digital para llenar e imprimir, personalizadas con los datos de la clínica, y cada formato indica la norma que cumple. Con implementación opcional: capacitación del equipo en el llenado.`;
         const tl = doc.setFont("helvetica","normal").setFontSize(10).splitTextToSize(txt, maxW-28);
         const nota = doc.setFontSize(8.5).splitTextToSize("La versión digital no sustituye un expediente clínico electrónico: para operar sin papel se requiere un sistema con certificado SIRES.", maxW-28);
         const h = 30 + tl.length*13 + nota.length*11 + 8;
+        siguientePaso = () => {
         checkBreak(h + 10); y += 8;
         doc.setFillColor(241,231,210); doc.roundedRect(margin, y, maxW, h, 6, 6, "F");
         doc.setFont("helvetica","bold"); doc.setFontSize(11.5); doc.setTextColor(...NAVY); doc.text("Siguiente paso recomendado", margin+14, y+20);
         doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(...INK); tl.forEach((l,k)=>doc.text(l, margin+14, y+36+k*13));
         doc.setFontSize(8.5); doc.setTextColor(...SOFT); nota.forEach((l,k)=>doc.text(l, margin+14, y+36+tl.length*13+4+k*11));
         y += h + 10;
+        };
       }
       y += 4; rule();
     }
   }catch(audErr){ console.warn("No se pudo agregar la auditoría de expedientes al PDF:", audErr); }
 
   heading("Conclusión", 13);
-  body(`El presente documento constituye un diagnóstico de revisión realizado con base en la información, documentación y evidencia recabada durante la visita del ${ev.fecha_visita||"(fecha no registrada)"}. No sustituye una visita de verificación ni una resolución emitida por la autoridad sanitaria.`);
+  body(`El presente documento constituye un diagnóstico de revisión realizado con base en la información, documentación y evidencia recabada durante la visita del ${ev.fecha_visita?fechaLarga(ev.fecha_visita):"(fecha no registrada)"}. No sustituye una visita de verificación ni una resolución emitida por la autoridad sanitaria.`);
+  if(siguientePaso){ try{ y += 6; siguientePaso(); }catch(spErr){ console.warn(spErr); } }
 
   // ---------- Levantamiento de sitio: lo registrado en el inventario (equipos, personal, etc.) ----------
   try{
@@ -4608,9 +4790,9 @@ async function generarPdfDiagnostico(cache, mode){
           doc.setFont("helvetica","bold"); doc.setFontSize(11); const tl = doc.splitTextToSize(titulo, tw);
           const lineas = [];
           doc.setFontSize(9);
-          filas.forEach(([lab,val])=>{ doc.setFont("helvetica","normal"); const vl = doc.splitTextToSize(val, tw-92); lineas.push([lab, vl]); });
+          filas.forEach(([lab,val])=>{ doc.setFont("helvetica","normal"); doc.setFontSize(9); const vl = doc.splitTextToSize(val, tw-92); doc.setFont("helvetica","bold"); doc.setFontSize(8.5); const ll = doc.splitTextToSize(lab, 86); lineas.push([ll, vl]); });
           const obsL = it.observaciones ? (doc.setFont("helvetica","normal"), doc.setFontSize(9), doc.splitTextToSize(it.observaciones, maxW-34)) : [];
-          const altoTexto = tl.length*14 + lineas.reduce((a,[,vl])=>a+vl.length*11.5,0) + 4;
+          const altoTexto = tl.length*14 + lineas.reduce((a,[ll,vl])=>a+Math.max(ll.length,vl.length)*11.5,0) + 4;
           const altoObs = obsL.length ? obsL.length*11.5 + 14 : 0;
           const hh = Math.max(foto ? PH + 8 : 0, altoTexto) + altoObs + 16;
           checkBreak(hh + 8);
@@ -4619,10 +4801,10 @@ async function generarPdfDiagnostico(cache, mode){
           if(foto){ try{ doc.addImage(foto, foto.startsWith("data:image/png") ? "PNG" : "JPEG", margin+10, y0-4, PW, PH); }catch(e){} }
           let yy = y0+4;
           doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(...NAVY); tl.forEach(t=>{ doc.text(t, tx, yy); yy+=14; });
-          lineas.forEach(([lab,vl])=>{
-            doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.setTextColor(...SOFT); doc.text(lab, tx, yy);
+          lineas.forEach(([ll,vl])=>{
+            doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.setTextColor(...SOFT); ll.forEach((l,k)=>doc.text(l, tx, yy + k*11.5));
             doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...INK); vl.forEach((v,k)=>doc.text(v, tx+92, yy + k*11.5));
-            yy += vl.length*11.5;
+            yy += Math.max(ll.length, vl.length)*11.5;
           });
           let yb = Math.max(yy, y0 + (foto ? PH : 0)) + 4;
           if(obsL.length){
@@ -6642,7 +6824,7 @@ const EXPA_ITEMS = {
     {k:"q5", t:"Consentimientos de cirugía y de anestesia", f:"NOM-004, 10.1.2.2–10.1.2.3", p:"Una carta de consentimiento para la cirugía y otra para la anestesia."},
     {k:"q6", t:"Hoja de enfermería: signos vitales, medicamentos con fecha, hora, cantidad y vía", f:"NOM-004, 9.1", p:"Hoja de enfermería con signos vitales y medicamentos con fecha, hora, cantidad y vía."},
     {k:"q7", t:"Nota de egreso", f:"NOM-004, 8.9", p:"Nota de egreso cuando el paciente se va: diagnóstico final, resumen e indicaciones."},
-    {k:"q8", t:"Lista de verificación de cirugía segura (OMS)", f:"NOM-004, 8.6", p:"Lista de verificación de cirugía segura antes, durante y al final de la cirugía.", rec:true},
+    {k:"q8", t:"Lista de verificación de cirugía segura (OMS)", f:"NOM-004, 8.6: la norma dice “podrá”, es opcional", p:"Lista de verificación de cirugía segura antes, durante y al final de la cirugía.", rec:true},
   ]},
 };
 function expaPlantillas(ev){
@@ -6786,13 +6968,13 @@ async function generarPdfExpAudit(ev, items, exps){
   const c = finPdfBase(); const {doc} = c;
   drawPortadaPdf(doc, {titulo:"Auditoría de expedientes clínicos", subtitulo:"Resultado de la muestra y guía de llenado", cliente:clinica, detalle:`Visita: ${ev.fecha_visita||"—"} · ${exps.length} expediente(s) revisado(s)`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
   c.header("Auditoría de expedientes clínicos", clinica);
-  c.body(`Se revisó una muestra de ${exps.length} expediente(s), identificados solo por folio o iniciales. Para cada elemento se indica en cuántos expedientes falla. La sección final es la guía de llenado que debe seguir todo expediente de este establecimiento.`, {size:10.5, lh:15}); c.y+=6;
+  c.body(`Se revisó una muestra de ${pl(exps.length,"expediente","expedientes")}; para proteger a los pacientes solo aparecen su folio o iniciales. Para cada elemento se indica en cuántos expedientes falla. La sección final es la guía de llenado que debe seguir todo expediente de este establecimiento.`, {size:10.5, lh:15}); c.y+=6;
   const fallan = res.filter(x=>x.fallan);
   c.heading(`Lo que falla (${fallan.length})`);
   if(fallan.length) fallan.sort((a,b)=>(a.rec-b.rec) || (b.fallan/b.evaluados - a.fallan/a.evaluados)).forEach(x=>{ c.row(x.t + (x.rec?" (recomendado)":""), `${x.fallan} de ${x.evaluados}`, x.fallan===x.evaluados && !x.rec); if(x.p) c.body("Cómo se corrige: "+x.p, {size:9, indent:10, color:c.SOFT, lh:11}); });
   else c.body("En la muestra revisada no se encontraron fallas.", {size:10.5});
   c.heading("Detalle por expediente");
-  exps.forEach(e=>{ const no = items.filter(it=>(e.r||{})[it.k]==="no"); c.body(`${e.ref}: ${no.length ? no.length+" elemento(s) faltante(s)" : "sin fallas"}`, {bold:true, size:10.5}); no.forEach(it=>c.body("•  "+it.t, {size:9.5, indent:10, lh:12})); c.y+=3; });
+  exps.forEach(e=>{ const no = items.filter(it=>(e.r||{})[it.k]==="no"); c.body(`${expaRefPrivada(e.ref)}: ${no.length ? no.length+" elemento(s) faltante(s)" : "sin fallas"}`, {bold:true, size:10.5}); no.forEach(it=>c.body("•  "+it.t, {size:9.5, indent:10, lh:12})); c.y+=3; });
   c.heading("Guía de llenado");
   [...new Set(items.map(i=>i.grupo))].forEach(g=>{
     c.body(g, {bold:true, size:11, color:c.NAVY});
