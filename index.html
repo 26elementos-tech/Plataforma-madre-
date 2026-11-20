@@ -1123,24 +1123,29 @@ function computeDiagnostico(activos, respuestas, manualHallazgos){
   activos.forEach(cr=>{
     const r = respuestas[cr.id];
     if(!r || !r.estatus) return;
-    porArea[cr.modulo] = porArea[cr.modulo] || {raw:0, denom:0, n:0, crit:0};
+    porArea[cr.modulo] = porArea[cr.modulo] || {raw:0, denom:0, n:0, crit:0, ok:0};
     porArea[cr.modulo].denom++;
+    if(r.estatus==="cumple") porArea[cr.modulo].ok = (porArea[cr.modulo].ok||0)+1;
   });
   manualHallazgos.forEach(h=>{
     const mod = h.categoria || "Hallazgos de visita";
-    porArea[mod] = porArea[mod] || {raw:0, denom:0, n:0, crit:0};
+    porArea[mod] = porArea[mod] || {raw:0, denom:0, n:0, crit:0, ok:0};
     porArea[mod].denom++;
   });
   findings.forEach(f=>{ const pa = porArea[f.criterio.modulo]; if(!pa) return; pa.raw += PRIORITY_POINTS[f.risk.prioridad]||0; pa.n = (pa.n||0)+1; if(f.risk.prioridad==="CRITICA") pa.crit = (pa.crit||0)+1; });
   const areaRows = Object.keys(porArea).map(mod=>{
-    const {raw:r2, denom:d2, n:nH, crit:nCr} = porArea[mod];
+    const {raw:r2, denom:d2, n:nH, crit:nCr, ok:nOk} = porArea[mod];
+    const cumpl = ((nOk||0)+(nH||0)) ? Math.round(100*(nOk||0)/((nOk||0)+(nH||0))) : null;
     const pct = d2>0 ? Math.round(100*r2/(d2*10)) : 0;
     // Un área con un punto crítico nunca se pinta en verde ni amarillo.
     const color = (pct>=71 || nCr>0) ? "#B3261E" : pct>=41 ? "#B8860B" : (pct>=16 || nH>0) ? "#C9A227" : "#2E7D4F";
-    return {modulo:mod, percent:pct, color, hallazgos:nH||0, criticos:nCr||0};
-  }).sort((a,b)=>b.percent-a.percent);
+    return {modulo:mod, percent:pct, color, hallazgos:nH||0, criticos:nCr||0, cumplimiento:cumpl};
+  }).filter(a=>a.cumplimiento!==null).sort((a,b)=>(b.criticos-a.criticos)||(b.percent-a.percent));
+  // Cumplimiento = puntos que cumplen ÷ (puntos que cumplen + puntos por corregir). Más alto = mejor.
+  const nOkTotal = activos.filter(cr=>respuestas[cr.id] && respuestas[cr.id].estatus==="cumple").length;
+  const cumplimiento = (nOkTotal + findings.length) ? Math.round(100*nOkTotal/(nOkTotal+findings.length)) : null;
 
-  return {findings, contestados, percent, band, bandNote, nCrit, nAlta, areaRows};
+  return {findings, contestados, percent, band, bandNote, nCrit, nAlta, areaRows, cumplimiento, nOkTotal};
 }
 
 // Convierte una fila de evaluacion_criterios_snapshot (la fuente única de verdad
@@ -3605,7 +3610,7 @@ async function renderDiagnosticoEvaluacion(){
 
   state._diagCache = {ev, diag, nombreExpediente: expRes.data?.nombre_expediente||""};
 
-  const gaugeSvg = drawGaugeSvg(diag.percent, diag.band.color, 96);
+  const gaugeSvg = drawGaugeSvg(diag.cumplimiento, diag.band.color, 96);
 
   c.innerHTML = `
     ${diagFromCache ? `<div class="empty-note" style="margin-bottom:14px">📴 Trabajando sin conexión con la última copia guardada.</div>` : ""}
@@ -3618,16 +3623,16 @@ async function renderDiagnosticoEvaluacion(){
         ${gaugeSvg}
         <div>
           <div style="font-weight:700;color:var(--navy-900);font-size:17px">Riesgo ${esc(diag.band.label)}</div>
-          <div class="muted small">Índice de Riesgo Regulatorio · ${diag.contestados} criterio(s) evaluado(s)</div>
-          ${diag.bandNote ? `<div class="small" style="color:#B3261E;margin-top:4px">${esc(diag.bandNote)}</div>` : ""}
+          <div class="muted small">Cumplimiento de lo revisado: ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} · ${diag.nOkTotal} punto(s) en orden, ${diag.findings.length} por corregir</div>
+          ${diag.nCrit ? `<div class="small" style="color:#B3261E;margin-top:4px">${diag.nCrit} punto(s) crítico(s): son los que pueden causar una suspensión.</div>` : (diag.bandNote ? `<div class="small" style="color:#B3261E;margin-top:4px">${esc(diag.bandNote)}</div>` : "")}
         </div>
       </div>
-      <p class="muted small" style="margin-top:10px;line-height:1.4">Este índice prioriza atención y urgencia con base en lo observado durante la visita. No determina cumplimiento legal ni autorización sanitaria.</p>
+      <p class="muted small" style="margin-top:10px;line-height:1.4">El círculo es el porcentaje de lo revisado que está en orden (más alto es mejor). El nivel de riesgo lo marca la gravedad de lo que falta: un solo punto crítico pesa más que muchos puntos en orden. No determina cumplimiento legal ni autorización sanitaria.</p>
     </div>
-    ${diag.areaRows.length ? `<div class="card"><div class="section-title">Riesgo por área</div>${diag.areaRows.map(a=>`
+    ${diag.areaRows.length ? `<div class="card"><div class="section-title">Cumplimiento por área</div><p class="muted small" style="margin:-4px 0 8px">La barra es lo que está en orden; el color es el riesgo de lo que falta.</p>${diag.areaRows.map(a=>`
       <div class="area-bar-row">
-        <div class="abr-top"><span>${esc(a.modulo)}</span><span style="font-weight:600">${a.percent}%</span></div>
-        <div class="area-bar-track"><div class="area-bar-fill" style="width:${a.percent}%;background:${a.color}"></div></div>
+        <div class="abr-top"><span>${esc(a.modulo)}${a.criticos?` <span style="color:#B3261E;font-size:12px">· ${a.criticos} crítico(s)</span>`:""}</span><span style="font-weight:600">${a.cumplimiento}%</span></div>
+        <div class="area-bar-track"><div class="area-bar-fill" style="width:${Math.max(a.cumplimiento,3)}%;background:${a.color}"></div></div>
       </div>`).join("")}</div>` : ""}
     <div class="card">
       <div class="section-title">Puntos por corregir ${diag.findings.length ? `(${diag.findings.length})` : ""}</div>
@@ -4294,14 +4299,14 @@ async function generarPdfDiagnostico(cache, mode){
   y+=4; rule();
 
   checkBreak(80);
-  gauge(margin+30, y+28, 30, diag.percent, diag.band.color);
+  gauge(margin+30, y+28, 30, diag.cumplimiento, diag.band.color);
   doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.setTextColor(...NAVY);
   doc.text(`Riesgo ${diag.band.label}`, margin+72, y+22);
   doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...SOFT);
-  doc.text("Indice de Riesgo Regulatorio", margin+72, y+35);
-  if(diag.bandNote){ doc.setFontSize(8.5); doc.setTextColor(179,38,30); doc.text(diag.bandNote, margin+72, y+48); doc.setTextColor(...INK); }
+  doc.text(`Cumplimiento de lo revisado: ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} (${diag.nOkTotal} en orden, ${diag.findings.length} por corregir)`, margin+72, y+35);
+  if(diag.nCrit){ doc.setFontSize(8.5); doc.setTextColor(179,38,30); doc.text(`${diag.nCrit} punto(s) critico(s): son los que pueden causar una suspension.`, margin+72, y+48); doc.setTextColor(...INK); }
   y += 78; // separación real contra el borde inferior del círculo (radio 30)
-  body("Este indice prioriza atencion y urgencia con base en lo observado durante la visita. No determina cumplimiento legal ni autorizacion sanitaria.", {size:10, color:SOFT});
+  body("El circulo es el porcentaje de lo revisado que esta en orden (mas alto es mejor). El nivel de riesgo lo marca la gravedad de lo que falta: un solo punto critico pesa mas que muchos puntos en orden. No determina cumplimiento legal ni autorizacion sanitaria.", {size:10, color:SOFT});
   y+=6; rule();
 
   // Prioridad inmediata (solo STPS): índice corto de lo crítico, con quién lo resuelve --
@@ -4335,8 +4340,9 @@ async function generarPdfDiagnostico(cache, mode){
   }
 
   if(diag.areaRows.length){
-    heading("Riesgo por área", 13);
-    diag.areaRows.forEach(a=>bar(a.modulo, a.percent, a.color, maxW));
+    heading("Cumplimiento por área", 13);
+    body("La barra es lo que está en orden; el color es el riesgo de lo que falta.", {size:9, color:SOFT, lh:12});
+    diag.areaRows.forEach(a=>bar(a.modulo + (a.criticos?` (${a.criticos} crítico${a.criticos===1?"":"s"})`:""), a.cumplimiento, a.color, maxW));
     y+=4; rule();
   }
 
@@ -4443,11 +4449,11 @@ async function generarPdfDiagnostico(cache, mode){
     checkBreak(120);
     heading("Análisis de la situación", 13);
     if(!findingsPDF.length){
-      body(`Con lo revisado en la visita, su establecimiento no presenta puntos por corregir. Su índice de riesgo es ${diag.percent===null?"—":diag.percent+"%"}. Mantener la documentación vigente y las bitácoras al día es lo que sostiene este resultado en una verificación.`, {size:10.5, lh:15});
+      body(`Con lo revisado en la visita, su establecimiento no presenta puntos por corregir. Cumple ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} de lo revisado. Mantener la documentación vigente y las bitácoras al día es lo que sostiene este resultado en una verificación.`, {size:10.5, lh:15});
     } else {
-      body(`Con lo revisado en la visita, su clínica tiene un índice de riesgo regulatorio de ${diag.percent===null?"—":diag.percent+"%"} (riesgo ${String(diag.band.label).toLowerCase()}). Tiene ${pend.length} punto(s) pendientes por corregir: ${nC} crítico(s), ${nA} de prioridad alta y ${nM} de prioridad media o baja${corr?`, y ya corrigió ${corr}`:""}.`, {size:10.5, lh:15});
+      body(`Con lo revisado en la visita, su clínica cumple ${diag.cumplimiento===null?"—":diag.cumplimiento+"%"} de lo revisado, pero su nivel de riesgo es ${String(diag.band.label).toLowerCase()} por la gravedad de lo que falta. Tiene ${pend.length} punto(s) pendientes por corregir: ${nC} crítico(s), ${nA} de prioridad alta y ${nM} de prioridad media o baja${corr?`, y ya corrigió ${corr}`:""}.`, {size:10.5, lh:15});
       y += 4;
-      if(areasTop.length) body(`El riesgo se concentra en ${areasTop.map(x=>`${x.modulo} (${x.percent}%)`).join(", ").replace(/, ([^,]*)$/, " y $1")}. ${sinRiesgo.length?`En cambio, ${sinRiesgo.slice(0,3).join(", ").replace(/, ([^,]*)$/, " y $1")} ${sinRiesgo.length===1?"está":"están"} en orden.`:""}`, {size:10.5, lh:15});
+      if(areasTop.length) body(`El riesgo se concentra en ${areasTop.map(x=>`${x.modulo} (${x.criticos ? x.criticos+" crítico"+(x.criticos===1?"":"s") : x.hallazgos+" por corregir"})`).join(", ").replace(/, ([^,]*)$/, " y $1")}. ${sinRiesgo.length?`En cambio, ${sinRiesgo.slice(0,3).join(", ").replace(/, ([^,]*)$/, " y $1")} ${sinRiesgo.length===1?"está":"están"} en orden.`:""}`, {size:10.5, lh:15});
       y += 4;
       const urg = pend.filter(f=>f.risk.prioridad==="CRITICA").slice(0,3);
       if(urg.length){
