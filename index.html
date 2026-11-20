@@ -350,6 +350,7 @@ async function syncHallazgoEquiposDocs(ev, equiposSem, manualHallazgos){
   const row = {evaluacion_id: ev.id, origen:"libre", categoria:"Equipamiento y dispositivos médicos", descripcion: desc,
     fundamento:"LGS arts. 262 y 376; Acuerdo DOF 07-07-2025. La exención de cada modelo se acredita con oficio de COFEPRIS o con la finalidad estética declarada por el fabricante.",
     impacto:1, probabilidad:2, prioridad:"baja", estatus_accion:"pendiente",
+    responsable: (manualHallazgos.find(h=>h.responsable)||{}).responsable || null,
     accion:"Pedir al proveedor, para cada equipo, el oficio de COFEPRIS de no requerimiento de ese modelo o el manual/ficha donde el fabricante declara uso estético, y guardarlo en la carpeta de equipos.",
     clasificacion_id: await getClasifSinClasificar(), created_by: state.profile && state.profile.id};
   const id = newId();
@@ -1286,8 +1287,8 @@ async function diagExtraBases(ev, manualHallazgos){
 }
 /* Tipo de requisito para el reporte: deja claro si es ley, condicionado o recomendación. */
 function tipoRequisitoTxt(f){
-  if(f.origen==="libre" && String(f.criterio.requisito||"").startsWith(EQ_DOCS_MARK)) return "Criterio sujeto a revisión (documento de respaldo del equipo)";
-  if(f.origen==="libre") return f.criterio.fundamento_legal ? "Hallazgo de visita con fundamento legal" : "Recomendación (buena práctica, sin fundamento legal específico)";
+  if(f.origen==="libre" && String(f.criterio.requisito||"").startsWith(EQ_DOCS_MARK)) return "Hallazgo de visita · criterio sujeto a revisión (documento de respaldo del equipo)";
+  if(f.origen==="libre") return f.criterio.fundamento_legal ? "Hallazgo de visita · con fundamento legal" : "Hallazgo de visita · recomendación (buena práctica, sin fundamento legal específico)";
   const a = f.criterio.aplicabilidad;
   return a==="obligatorio" ? "Obligación legal" : a==="condicionado" ? "Obligación condicionada (aplica por los servicios que ofrece)" : a==="revision" ? "Criterio sujeto a revisión" : a==="buena_practica" ? "Buena práctica (no es obligación legal)" : "";
 }
@@ -3065,9 +3066,13 @@ function renderWizStep1(c,w){
       <div class="group-title" style="margin-top:10px">Con equipo o procedimiento médico</div>
       <div class="chip-grid">${SPA_SERVICIOS.filter(x=>x.m).map(x=>`<div class="chip ${(w.spaServicios||[]).includes(x.s)?"selected":""}" data-spa="${esc(x.s)}">${esc(x.s)}</div>`).join("")}</div>
       ${(w.spaServicios||[]).length ? (r.medico
-        ? `<div style="margin-top:12px;padding:12px;border-radius:10px;background:#FDECEA;color:#8C221B"><b>🚩 Clasificación: clínica de medicina estética${r.aparatologia?" con aparatología":""}</b><div class="small" style="margin-top:4px">Se anuncia como spa, pero ofrece servicios de atención médica (${esc(r.medicosLista.join(", "))}). Se revisará como clínica estética y quedará un hallazgo automático.</div></div>`
+        ? `<div style="margin-top:12px;padding:12px;border-radius:10px;background:#FDECEA;color:#8C221B"><b>🚩 Clasificación: clínica de medicina estética${r.aparatologia?" con aparatología":""}</b><div class="small" style="margin-top:4px">Ofrece servicios de atención médica (${esc(r.medicosLista.join(", "))}). Se revisará como clínica estética.</div>
+          <div class="small" style="margin-top:10px;color:var(--ink)"><b>¿Tiene aviso de funcionamiento de atención médica con médico responsable sanitario?</b></div>
+          <div class="chip-grid" style="margin-top:6px">${[["si","Sí, lo tiene"],["no","No"],["nose","No lo sé / no lo mostró"]].map(([v,l])=>`<div class="chip ${w.spaAvisoMedico===v?"selected":""}" data-spaaviso="${v}">${l}</div>`).join("")}</div>
+          <div class="small" style="margin-top:6px">${w.spaAvisoMedico==="si" ? "Cubierto: no se genera hallazgo por esto." : w.spaAvisoMedico==="no" ? "Quedará un hallazgo crítico: falta el aviso de atención médica." : w.spaAvisoMedico==="nose" ? "Quedará un punto de prioridad alta: verificar el aviso." : "Elige una opción."}</div></div>`
         : `<div style="margin-top:12px;padding:12px;border-radius:10px;background:#E8F3EC;color:#1F5E3A"><b>Clasificación: spa de bienestar y belleza</b><div class="small" style="margin-top:4px">No es un establecimiento de atención médica. Se revisa con la base común.</div></div>`) : ""}`;
     c.appendChild(card);
+    card.querySelectorAll("[data-spaaviso]").forEach(ch=>ch.onclick=()=>{ w.spaAvisoMedico = ch.dataset.spaaviso; if(w.spaTriage) w.spaTriage.avisoMedico = w.spaAvisoMedico; renderWizStep1(c,w); });
     card.querySelectorAll("[data-spa]").forEach(ch=>ch.onclick=()=>{
       w.spaServicios = w.spaServicios || []; const k = ch.dataset.spa; const j = w.spaServicios.indexOf(k);
       if(j>-1) w.spaServicios.splice(j,1); else w.spaServicios.push(k);
@@ -3219,12 +3224,17 @@ async function finishWizardEval(){
     await queueOperation("rpc:crear_snapshot_evaluacion", evaluacionId, "CREATE", {p_evaluacion_id: evaluacionId});
   }
 
-  if(facts.spaTriage && facts.spaTriage.medico){
+  if(facts.spaTriage && facts.spaTriage.medico && facts.spaTriage.avisoMedico!=="si"){
+    const sinAviso = facts.spaTriage.avisoMedico==="no";
+    const imp = 4, prob = sinAviso ? 4 : 2;
     try{
       await persistEntity("hallazgos", newId(), "CREATE", {evaluacion_id: evaluacionId, origen:"libre", clasificacion_id: await getClasifSinClasificar(), created_by: state.profile.id,
-        descripcion: `Se anuncia como spa, pero ofrece servicios de atención médica: ${facts.spaTriage.medicosLista.join(", ")}.`,
-        categoria: "Autorizaciones sanitarias", accion: "Presentar el aviso de funcionamiento como establecimiento de atención médica con fines estéticos, con médico responsable sanitario, o dejar de ofrecer los servicios médicos.",
-        impacto: 4, probabilidad: 4, prioridad: computeManualPrioridad(4,4).toLowerCase(), estatus_accion: "pendiente"});
+        descripcion: sinAviso ? `Ofrece servicios de atención médica (${facts.spaTriage.medicosLista.join(", ")}) sin aviso de funcionamiento de atención médica con médico responsable sanitario.`
+                              : `Ofrece servicios de atención médica (${facts.spaTriage.medicosLista.join(", ")}); no se mostró el aviso de funcionamiento de atención médica con médico responsable sanitario.`,
+        categoria: "Autorizaciones sanitarias", fundamento: "Ley General de Salud, Art. 200 Bis (aviso de funcionamiento)",
+        accion: sinAviso ? "Presentar el aviso de funcionamiento como establecimiento de atención médica con fines estéticos, con médico responsable sanitario, o dejar de ofrecer los servicios médicos."
+                         : "Localizar y tener en la carpeta de autorizaciones el aviso de funcionamiento de atención médica y el aviso de responsable sanitario. Si no existen, presentarlos.",
+        impacto: imp, probabilidad: prob, prioridad: computeManualPrioridad(imp,prob).toLowerCase(), estatus_accion: "pendiente"});
     }catch(e){ console.warn("No se pudo crear el hallazgo de spa:", e); }
   }
   state.wizard = null;
@@ -3843,7 +3853,7 @@ async function renderDiagnosticoEvaluacion(){
         <div class="fc2-body">
           <span class="fc2-tag ${PRIORITY_CLS[f.risk.prioridad]}">${PRIORITY_LABEL[f.risk.prioridad]} · ${esc(f.criterio.modulo)}</span>
           <p class="fc2-title ${done?'done':''}">${esc(f.criterio.requisito)}</p>
-          <div class="fc2-meta">${f.origen==="libre"?"Hallazgo de visita":"Estatus: "+STATUS_TEXT[f.estatus]}${f.nota?" — "+esc(f.nota):""}</div>
+          ${f.origen==="libre" ? "" : `<div class="fc2-meta">Estatus: ${STATUS_TEXT[f.estatus]}${f.nota?" — "+esc(f.nota):""}</div>`}
           <div class="fc2-meta"><b>${esc(tipoRequisitoTxt(f)||"Fundamento")}</b>${f.criterio.fundamento_legal ? " · "+esc(f.criterio.fundamento_legal) : (mode==="interno" ? " · <span style='color:#B3261E'>sin fundamento capturado</span>" : "")}</div>
           <div class="fc2-action-row">
             <div class="fc2-photos" id="evid-find-${f.criterio.id}"></div>
@@ -4569,7 +4579,7 @@ async function generarPdfDiagnostico(cache, mode){
     y += 11;
     doc.setFont("helvetica","bold"); doc.setFontSize(10.5); doc.setTextColor(...(doneF?SOFT:INK));
     doc.splitTextToSize(f.criterio.requisito, maxW-22).forEach(line=>{ checkBreak(13); doc.text(line, textX, y); y+=12; });
-    body(f.origen==="libre" ? "Hallazgo de visita" : `Estatus: ${STATUS_TEXT[f.estatus]}${f.nota?" — "+f.nota:""}`, {size:10.5, indent:22, color:SOFT});
+    if(f.origen!=="libre") body(`Estatus: ${STATUS_TEXT[f.estatus]}${f.nota?" — "+f.nota:""}`, {size:10.5, indent:22, color:SOFT});
     { const tipo = tipoRequisitoTxt(f);
       if(tipo) body(tipo, {size:9, indent:22, color:NAVY, bold:true, lh:12});
       if(f.criterio.fundamento_legal) body(`Fundamento: ${f.criterio.fundamento_legal}`, {size:9, indent:22, color:SOFT, lh:12});
@@ -6777,7 +6787,7 @@ function spaAplicarClasificacion(w){
   const servicios = r.servicios.filter(s=>!w.servicios.includes(s));
   w.tipoEstablecimiento.push(...tipos); w.servicios.push(...servicios);
   w.spaAuto = {tipos, servicios};
-  w.spaTriage = {servicios: w.spaServicios||[], medico: r.medico, aparatologia: r.aparatologia, medicosLista: r.medicosLista};
+  w.spaTriage = {servicios: w.spaServicios||[], medico: r.medico, aparatologia: r.aparatologia, medicosLista: r.medicosLista, avisoMedico: w.spaAvisoMedico||""};
   return r;
 }
 
