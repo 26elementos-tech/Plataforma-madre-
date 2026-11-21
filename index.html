@@ -242,6 +242,7 @@ const SERVICIOS_CATALOG = [
   {group:"Medicina estética", items:["Toxina botulínica","Ácido hialurónico","Bioestimuladores","Skinboosters",
     "Mesoterapia","Microneedling","Peelings","Hidrafacial","Radiofrecuencia","Depilación láser",
     "Láser dermatológico","Tratamientos faciales","Tratamientos corporales"]},
+  {group:"Medicina regenerativa y terapias IV", items:["Células madre / terapia celular","Plasma rico en plaquetas (PRP)","Exosomas / secretoma / polinucleótidos","Sueros y vitaminas intravenosas"]},
   {group:"Procedimientos invasivos", items:["Inyectables","Procedimientos con punción","Procedimientos con anestesia","Otros procedimientos invasivos"]},
   {group:"Quirúrgicos", items:["Cirugía estética","Cirugía ambulatoria","Procedimientos bajo anestesia","Recuperación postoperatoria"]},
   {group:"Micropigmentación", items:["Microblading","Micropigmentación"]},
@@ -408,7 +409,10 @@ const COLLECTION_SCHEMAS = {
     {key:"chk_cedula_post",label:"¿Incluye nombre del médico, institución y cédula?",type:"select",options:["Sí","No"],niveles:["intermedio","completo"]},
     {key:"chk_promesas",label:"¿Evita promesas no comprobables (garantizado, permanente, «10 años menos»)?",type:"select",options:["Sí","No"],niveles:["intermedio","completo"]},
     {key:"chk_terapeutico",label:"¿Evita atribuir propiedades médicas (cura, previene, trata)?",type:"select",options:["Sí","No"],niveles:["intermedio","completo"]},
-    {key:"chk_marcas",label:"¿Evita nombres comerciales de medicamentos (ej. Botox) y su venta?",type:"select",options:["Sí","No"],niveles:["intermedio","completo"]},
+    {key:"chk_marcas",label:"¿Evita marcas de medicamentos de receta (Botox, Dysport, Xeomin) y la venta de medicamentos?",type:"select",options:["Sí","No"],niveles:["intermedio","completo"]},
+    {key:"chk_marca_producto",label:"¿Evita marcas de rellenos o productos (Sculptra, Juvederm…)?",type:"select",options:["Sí","No"],niveles:["intermedio","completo"]},
+    {key:"chk_sinregistro",label:"¿Los productos que muestra o anuncia (PDRN, exosomas, sueros…) tienen registro en México?",type:"select",options:["No muestra productos","Sí, con registro","No / no se pudo verificar"],niveles:["intermedio","completo"]},
+    {key:"chk_imagenes",label:"¿Las imágenes son de sus pacientes o de la clínica (no de campañas de marca, famosos o bancos de imágenes)?",type:"select",options:["Sí","No"],niveles:["completo"]},
     {key:"chk_riesgos",label:"¿Menciona riesgos y contraindicaciones?",type:"select",options:["Sí","No"],niveles:["completo"]},
     {key:"chk_antesdespues",label:"Antes y después",type:"select",options:["No usa","Sí, real y con consentimiento","Sí, sin respaldo o sin consentimiento"],niveles:["completo"]},
     {key:"chk_influencer",label:"¿Es de influencer o testimonio pagado?",type:"select",options:["No","Sí, cumple lo anterior","Sí, no cumple"],niveles:["completo"]},
@@ -759,7 +763,10 @@ const REDES_FALLAS = [
   {k:"chk_cedula_post", bad:["No"], d:"Publicación sin nombre del médico, institución y cédula", a:"Agregar el pie con nombre del médico, institución y cédula a toda publicación promocional."},
   {k:"chk_promesas", bad:["No"], d:"Promesas de resultado no comprobables", a:"Reescribir sin promesas: limitarse a resultados reales y comprobables."},
   {k:"chk_terapeutico", bad:["No"], d:"Se atribuyen propiedades médicas a un servicio estético", a:"Quitar las palabras curar, prevenir o tratar en servicios de embellecimiento."},
-  {k:"chk_marcas", bad:["No"], d:"Uso de nombres comerciales de medicamentos o venta por redes", a:"Quitar nombres comerciales de medicamentos y no ofrecerlos en venta por redes."},
+  {k:"chk_marcas", bad:["No"], d:"Uso de marcas de medicamentos de receta (p. ej. Botox) en publicidad al público, o venta de medicamentos por redes", a:"Quitar las marcas de medicamentos de receta y anunciar el tratamiento (p. ej. «aplicación de toxina botulínica, previa valoración médica»). Solo los medicamentos sin receta pueden anunciarse en medios masivos (RLGSMP art. 40; LGS art. 310)."},
+  {k:"chk_marca_producto", bad:["No"], d:"Uso de marcas de rellenos o productos de aplicación médica (criterio sujeto a revisión)", a:"Anunciar el tratamiento y no la marca del producto."},
+  {k:"chk_sinregistro", bad:["No / no se pudo verificar"], d:"Se anuncian o muestran productos de los que no se comprobó registro sanitario en México", a:"Verificar el registro sanitario de cada producto que se muestra; retirar de redes y dejar de usar los que no lo tengan (LGS art. 376)."},
+  {k:"chk_imagenes", bad:["No"], d:"Se usan imágenes que no son de pacientes de la clínica (campañas de marca, famosos o bancos de imágenes)", a:"Usar solo imágenes reales de la clínica y de pacientes con consentimiento; las de campañas de marca pueden inducir a error sobre los resultados."},
   {k:"chk_riesgos", bad:["No"], d:"No se mencionan riesgos ni contraindicaciones", a:"Agregar la leyenda de riesgos y contraindicaciones."},
   {k:"chk_antesdespues", bad:["Sí, sin respaldo o sin consentimiento"], d:"Antes y después sin respaldo o sin consentimiento del paciente", a:"Usar solo antes y después reales, sin edición y con consentimiento por escrito del paciente."},
   {k:"chk_influencer", bad:["Sí, no cumple"], d:"Contenido de influencer o testimonio que no cumple las reglas", a:"Aplicar las mismas reglas a influencers y aprobar sus textos antes de publicar."},
@@ -1219,6 +1226,7 @@ function computeDiagnostico(activos, respuestas, manualHallazgos, extra){
     const ex = extraAreas[mod];
     let cumpl, baseTxt = "";
     if(ex && ex.reemplaza && (ex.ok+ex.mal)>0){ cumpl = Math.round(100*ex.ok/(ex.ok+ex.mal)); baseTxt = ex.txt||""; }
+    else if(ex && ex.reemplaza && ex.soloBase){ cumpl = null; baseTxt = ex.txt||""; }
     else {
       const okA = (nOk||0) + ((ex && ex.ok) || 0);
       cumpl = okA>0 ? Math.round(100*okA/(okA+(nH||0))) : null;
@@ -1267,8 +1275,12 @@ async function diagExtraBases(ev, manualHallazgos){
     const equipos = (collR.data||[]).filter(x=>x.tipo_id===tipoIds["c:equipo"]);
     out.equipos = equipos.map(x=>({id:x.id, nombre:(x.campos&&x.campos.equipo||"").trim() || (x.campos&&x.campos.tipoEquipo) || "Equipo", tipo:(x.campos&&x.campos.tipoEquipo)||"", sem: equipoSemaforo(x.campos)}));
     if(equipos.length){
+      // Los equipos en amarillo (solo falta pedir documento) no restan: quedan como pendientes aparte.
       const ok = out.equipos.filter(e=>e.sem.color==="verde").length;
-      out.areas["Equipamiento y dispositivos médicos"] = {ok, mal: equipos.length-ok, reemplaza:true, txt:`${ok} de ${equipos.length} equipos en orden`};
+      const rojos = out.equipos.filter(e=>e.sem.color==="rojo").length;
+      const amar = equipos.length - ok - rojos;
+      out.areas["Equipamiento y dispositivos médicos"] = {ok, mal: rojos, reemplaza:true, soloBase:true,
+        txt:`${ok} de ${equipos.length} equipos en orden${amar?`; ${amar} con documento pendiente de pedir al proveedor (no resta)`:""}`};
       out.okGlobal += ok;
     }
   }catch(e){ console.warn("Bases de equipos no disponibles:", e); }
@@ -3129,17 +3141,29 @@ function renderWizStep3(c,w){
 }
 
 function renderWizStep4(c,w){
+  w.modalidad = w.modalidad || "presencial";
+  const remota = w.modalidad==="remota";
   c.innerHTML = `
     <div class="card">
+      <b>Modalidad</b>
+      <div class="chip-grid" style="margin-top:8px">
+        <div class="chip ${!remota?"selected":""}" data-mod="presencial">🏥 Presencial</div>
+        <div class="chip ${remota?"selected":""}" data-mod="remota">📹 Remota (videollamada)</div>
+      </div>
+      ${remota ? `<p class="small" style="margin:10px 0 0">Un solo nivel: revisión documental completa (autorizaciones, expedientes, equipos con fotos y redes) y recorrido guiado por video. Lo que no se vea con claridad a cámara se marca <b>No verificado</b> y el reporte lo aclara.</p>` : ""}
+    </div>
+    ${remota ? "" : `<div class="card">
       <p class="muted">La profundidad depende de la complejidad del establecimiento, no de un número fijo de preguntas.</p>
       ${NIVELES.map(n=>`
         <div class="level-option ${w.nivelCheckup===n.id?'selected':''}" data-n="${n.id}">
           <div class="lo-name">${n.name}</div><div class="lo-desc">${n.desc}</div>
         </div>`).join("")}
-    </div>
+    </div>`}
   `;
+  c.querySelectorAll("[data-mod]").forEach(el=>el.onclick=()=>{ w.modalidad = el.dataset.mod; if(w.modalidad==="remota") w.nivelCheckup = "completo"; renderWizStep4(c,w); });
   c.querySelectorAll(".level-option").forEach(el=>el.onclick=()=>{ w.nivelCheckup=el.dataset.n; renderWizStep4(c,w); });
 }
+function esRemota(ev){ return !!(ev && ev.facts && ev.facts.modalidad==="remota"); }
 
 async function onWizardEvalNext(){
   const w = state.wizard;
@@ -3159,6 +3183,7 @@ async function finishWizardEval(){
   if(btn){ btn.disabled = true; btn.textContent = "Creando evaluación..."; }
 
   const facts = {
+    modalidad: w.modalidad || "presencial",
     tipoEstablecimiento: w.tipoEstablecimiento,
     servicios: [...w.servicios, ...w.serviciosCustom],
     generaRPBI: w.generaRPBI, anestesiaSedacion: w.anestesiaSedacion,
@@ -3278,7 +3303,7 @@ async function renderResumenEvaluacion(){
   if(brandEl) brandEl.textContent = "VISITA EN CURSO · " + dep.label;
   state.currentDep = dep.codigo;
   getExpedienteRow(ev.expediente_id).then(row=>{ const t=document.getElementById("visit-title"); if(row && t) t.textContent = row.nombre_expediente; }).catch(()=>{});
-  const subEl = document.getElementById("visit-sub"); if(subEl) subEl.textContent = dep.codigo==="cofepris" ? `Nivel ${ev.nivel_checkup} · Sigue la ruta en orden; puedes saltar entre etapas` : `Nivel ${ev.nivel_checkup} · Toca cualquier sección en cualquier orden`;
+  const subEl = document.getElementById("visit-sub"); if(subEl) subEl.textContent = dep.codigo==="cofepris" ? (esRemota(ev) ? "📹 Remota · Sigue la ruta; lo que no se vea a cámara va como No verificado" : `Nivel ${ev.nivel_checkup} · Sigue la ruta en orden; puedes saltar entre etapas`) : `Nivel ${ev.nivel_checkup} · Toca cualquier sección en cualquier orden`;
   const c = document.getElementById("res-content");
   if(snapRes.error){ c.innerHTML = `<div class="err">${esc(snapRes.error.message)}</div>`; return; }
   const fromCacheRes = snapRes.fromCache || respRes.fromCache;
@@ -3456,6 +3481,7 @@ async function renderResumenEvaluacion(){
         </div>
         <div class="crit-meta"><b>Fundamento:</b> ${esc(cr.fundamento_legal||"—")}${extraFund[cr.id] ? `<br><span style="opacity:.85">También cubre: ${esc(extraFund[cr.id])}</span>` : ""}</div>
         ${cr.runtimeUncertain ? `<div class="crit-meta" style="color:#2F6FA8">Aplicabilidad no determinada — confirma en sitio.</div>` : ""}
+        ${RUTA && esRemota(ev) && rutaDeCriterio(cr.id).etapa===3 ? `<div class="crit-meta" style="color:#7A5B12;background:#FBF3E0;padding:6px 8px;border-radius:8px">📹 Pide que te lo muestren a cámara. Si no se ve con claridad, marca <b>No verificado</b>.</div>` : ""}
         <div class="status-grid">
           ${STATUS_OPTS.map(([v,l])=>`<div class="status-opt ${resp.estatus===v?'sel-'+v:''}" data-crit="${cr.id}" data-v="${v}">${l}</div>`).join("")}
         </div>
@@ -3621,20 +3647,22 @@ const RUTA_AREAS_ORDEN = ["Avisos y licencias","Responsable sanitario y especial
 const RUTA_MAPA = {
   "Avisos y licencias":[2,["m1-01","m1-02","m1-03","m1-04","m1-05","est-01","est-02","est-03","est-04","hosp-01","hosp-03","mb-01"]],
   "Responsable sanitario y especialidad":[2,["m2-01","m2-02","m2-03","est-07","est-08","est-16","hosp-02"]],
-  "Publicidad":[2,["m4-01","m4-02","m4-03","m4-04","m4-05"]],
+  "Publicidad":[2,["m4-01","m4-02","m4-03","m4-04","m4-05","mr-13"]],
+  "Medicina regenerativa: licencias y protocolo":[2,["mr-01","mr-02","mr-03"]],
   "Recepción, sala de espera y sanitarios":[3,["m5-04","est-19","esp-01","dent-01","m5-03","spa-06"]],
   "Consultorios y cabinas":[3,["m5-01","m5-02","est-22","est-27","est-28","esp-02","esp-03","cons-03","dent-02","dent-07","spa-02","spa-03","spa-04","spa-07","spa-11","mb-10","mb-11","mb-12"]],
   "Almacén, medicamentos y refrigerador":[3,["est-23","cons-04","spa-01","dent-10","m5-05"]],
+  "Medicina regenerativa y sueros: productos y equipo":[3,["mr-04","mr-05","mr-06","mr-08","mr-10","mr-11"]],
   "RPBI":[3,["m3-02","dent-06","spa-09","hosp-08"]],
   "Esterilización":[3,["dent-03","dent-04","dent-05","hosp-14"]],
   "Instalaciones, agua y limpieza":[3,["cons-07","cons-08","spa-05","spa-10","hosp-04","hosp-05","hosp-06","hosp-07","est-10","est-11"]],
   "Área quirúrgica":[3,["est-09","est-12","hosp-10","hosp-11","hosp-12","hosp-13"]],
   "Urgencias":[3,["hosp-15","hosp-16","hosp-17"]],
   "Personal":[4,["m2-04","est-18","mb-03","mb-04","mb-05"]],
-  "Registros, bitácoras y RPBI":[4,["est-17","cons-01","est-20","cons-02","est-25","cons-05","spa-08","cons-06","mb-09","m3-01","m3-03","m3-04","m3-05"]],
+  "Registros, bitácoras y RPBI":[4,["mr-14","est-17","cons-01","est-20","cons-02","est-25","cons-05","spa-08","cons-06","mb-09","m3-01","m3-03","m3-04","m3-05"]],
   "Manuales y sistemas":[4,["est-24","est-26","mb-02","hosp-09","est-21"]],
   "Comités y convenios":[4,["est-05","est-06"]],
-  "Expedientes":[5,["m6-01","m6-02","m6-03","dent-08","dent-09","mb-06","mb-07","mb-08"]],
+  "Expedientes":[5,["mr-07","mr-09","mr-12","m6-01","m6-02","m6-03","dent-08","dent-09","mb-06","mb-07","mb-08"]],
 };
 const RUTA_CRIT = {};
 Object.entries(RUTA_MAPA).forEach(([area,[et,ids]])=>ids.forEach(id=>{ RUTA_CRIT[id] = {etapa:et, area}; }));
@@ -3979,7 +4007,7 @@ async function generarProtocoloMkt(ev){
     doc.setFillColor(...(color||NAVY)); doc.circle(margin+5, y-3.5, 2.3, "F"); doc.setTextColor(...INK); lines.forEach(l=>{ doc.text(l, margin+16, y); y+=14; }); y+=3; };
 
   drawPortadaPdf(doc, {titulo:"Protocolo de publicación en redes sociales", subtitulo:"Guía para el equipo de marketing", cliente:clinica,
-    detalle:`Derivado del Check-up Regulatorio del ${ev.fecha_visita||"—"}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
+    detalle:`Derivado del Check-up Regulatorio del ${fechaLarga(ev.fecha_visita)}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
 
   doc.setFillColor(...NAVY); doc.rect(0,0,pageW,110,"F");
   try{ doc.addImage(LOGO_MARK_B64, "PNG", pageW-margin-40, 14, 44, 44); }catch(e){}
@@ -3999,7 +4027,14 @@ async function generarProtocoloMkt(ev){
   body("Fundamento: Reglamento de la Ley General de Salud en Materia de Publicidad, art. 19.", {size:9, color:SOFT});
 
   heading("2. Permiso o aviso de publicidad");
-  const permiso = perfil.chk_permiso || "No verificado";
+  let permiso = perfil.chk_permiso || "";
+  if(!permiso){ // si no se llenó en la revisión de redes, se toma lo registrado en el check-up
+    try{
+      const { data: rp } = await sb.from("respuestas_criterio").select("estatus,nota").eq("evaluacion_id", ev.id).eq("criterio_id","m4-02").maybeSingle();
+      if(rp && rp.estatus) permiso = `${STATUS_TEXT[rp.estatus]||rp.estatus}${rp.nota?" ("+rp.nota.trim().replace(/\.$/,"")+")":""}`;
+    }catch(e){}
+  }
+  permiso = permiso || "No verificado";
   body(`Estatus encontrado en la visita: ${permiso}${perfil.permisoNumero ? " · No. " + perfil.permisoNumero : ""}.`, {bold:true, size:10.5});
   bullet("La publicidad de la clínica y de sus tratamientos estéticos requiere permiso de COFEPRIS; el médico que se anuncia de forma individual presenta aviso.");
   bullet("Mientras no se cuente con el permiso o aviso, no pautar (pagar anuncios de) tratamientos ni contratar influencers para promoverlos.");
@@ -4033,8 +4068,13 @@ async function generarProtocoloMkt(ev){
   bullet("Indicar número de sesiones y tiempo transcurrido, y que los resultados varían en cada paciente.");
 
   heading("6. Medicamentos y marcas");
-  bullet("No usar nombres comerciales de medicamentos en publicaciones (por ejemplo Botox); hablar del tratamiento, no del producto.");
+  bullet("Con el permiso de publicidad, la clínica sí puede anunciar sus servicios: por ejemplo «aplicación de toxina botulínica» o «tratamiento con ácido hialurónico», previa valoración médica.");
+  bullet("Lo que el permiso de la clínica no cubre: usar marcas comerciales de medicamentos que requieren receta (Botox, Dysport, Xeomin…) en publicidad dirigida al público. Solo los medicamentos que se venden sin receta pueden anunciarse en medios masivos (RLGSMP art. 40); la publicidad de medicamentos de receta solo puede dirigirse a profesionales de la salud (LGS art. 310).");
+  bullet("Marcas de rellenos (ácido hialurónico) y otros productos de aplicación médica: criterio sujeto a revisión; lo prudente es hablar del tratamiento y no de la marca.");
   bullet("No vender ni ofrecer medicamentos o productos de aplicación por redes sociales o mensajes.");
+  bullet("No mostrar productos que no tengan registro sanitario en México (por ejemplo PDRN, exosomas o sueros importados sin registro).");
+  bullet("Usar imágenes reales de la clínica y de sus pacientes; evitar fotos de campañas de la marca o de personas famosas, que pueden inducir a error sobre los resultados.");
+  bullet("Recomendación de prudencia (no es una prohibición expresa): evitar descuentos y promociones agresivas en procedimientos médicos («2x1», «40% off»), sobre todo junto con marcas de producto.");
 
   heading("7. Influencers, testimonios y mensajes directos");
   bullet("El contenido de influencers y testimonios pagados cuenta como publicidad de la clínica: debe cumplir todo este protocolo.");
@@ -4048,7 +4088,7 @@ async function generarProtocoloMkt(ev){
   }
 
   heading(fallas.length ? "9. Checklist antes de publicar" : "8. Checklist antes de publicar");
-  ["¿Lleva el pie con nombre del médico, institución y cédula?","¿Evita promesas (garantizado, permanente, «años menos»)?","¿Evita decir que cura, previene o trata?","¿Evita nombres comerciales de medicamentos y venta por redes?","¿Incluye la leyenda de riesgos?","Si usa antes y después: ¿es real, sin edición y con consentimiento?","¿El servicio anunciado lo ofrece realmente la clínica?","¿Lo aprobó el médico o el responsable sanitario?"].forEach(t=>{
+  ["¿Lleva el pie con nombre del médico, institución y cédula?","¿Evita promesas (garantizado, permanente, «años menos»)?","¿Evita decir que cura, previene o trata?","¿Evita marcas de medicamentos de receta (Botox, Dysport…) y venta por redes?","¿Los productos que se muestran tienen registro sanitario en México?","¿Las imágenes son de la clínica o de sus pacientes, no de campañas de marca?","¿Incluye la leyenda de riesgos?","Si usa antes y después: ¿es real, sin edición y con consentimiento?","¿El servicio anunciado lo ofrece realmente la clínica?","¿Lo aprobó el médico o el responsable sanitario?"].forEach(t=>{
     const lines = doc.setFont("helvetica","normal").setFontSize(10.5).splitTextToSize(t, maxW-22); checkBreak(lines.length*14+4);
     doc.setDrawColor(...NAVY); doc.rect(margin, y-9, 10, 10); doc.setTextColor(...INK); lines.forEach(l=>{ doc.text(l, margin+18, y); y+=14; }); y+=3;
   });
@@ -4415,6 +4455,9 @@ async function generarPdfDiagnostico(cache, mode){
   const {jsPDF} = window.jspdf;
   const {ev, diag, nombreExpediente} = cache;
   const datosEst = await getDatosEst(ev.expediente_id);
+  let remota = esRemota(ev);
+  if(!ev.facts){ try{ const r = await sb.from("evaluaciones").select("facts").eq("id", ev.id).single(); remota = !!(r.data && r.data.facts && r.data.facts.modalidad==="remota"); }catch(e){} }
+  const AVISO_REMOTA = "Modalidad remota: la revisión documental se hizo con los documentos y fotografías compartidos por la clínica, y el recorrido fue guiado por videollamada. Lo que no se pudo observar con claridad se reporta como «no verificado»; este diagnóstico no sustituye una revisión presencial.";
   const doc = new jsPDF({unit:"pt", format:"letter"});
   const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
   const margin = 48, maxW = pageW - margin*2;
@@ -4436,8 +4479,8 @@ async function generarPdfDiagnostico(cache, mode){
 
   { const depPortada = detectDependencia((diag.findings||[]).map(f=>f.criterio?.id||""));
     drawPortadaPdf(doc, {titulo:depPortada.pdfTitle, cliente:datosEst.nombreComercial||nombreExpediente,
-      subtitulo: mode==="interno" ? "Registro interno del evaluador" : "Diagnóstico y plan de acción",
-      detalle:`Fecha de visita: ${fechaLarga(ev.fecha_visita)}`, detalle2:[datosEst.domicilio, datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")}); }
+      subtitulo: mode==="interno" ? "Registro interno del evaluador" : (remota ? "Diagnóstico y plan de acción · Revisión remota" : "Diagnóstico y plan de acción"),
+      detalle:`${remota?"Fecha de la videollamada":"Fecha de visita"}: ${fechaLarga(ev.fecha_visita)}`, detalle2:[datosEst.domicilio, datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")}); }
   doc.setFillColor(...NAVY); doc.rect(0,0,pageW,110,"F");
   // Logo -- insignia blanca en la esquina del encabezado, mismo tratamiento que en la app
   try{
@@ -4452,7 +4495,8 @@ async function generarPdfDiagnostico(cache, mode){
   doc.setFontSize(9.5); doc.setTextColor(216,193,150);
   doc.text("Elaborado por: Saúl Flores | Elementos Financieros", margin, 92);
   y = 135; doc.setTextColor(...INK);
-  body(`Fecha de visita: ${fechaLarga(ev.fecha_visita)}    Nivel: ${ev.nivel_checkup}`, {size:10});
+  body(`Fecha de visita: ${fechaLarga(ev.fecha_visita)}    ${remota ? "Modalidad: remota (videollamada)" : "Nivel: "+ev.nivel_checkup}`, {size:10});
+  if(remota) body(AVISO_REMOTA, {size:8.5, color:SOFT, lh:11});
   datosEstLineas(datosEst).forEach(l=> body(l, {size:10, color:SOFT, lh:14}));
   y+=4; rule();
 
@@ -4644,7 +4688,8 @@ async function generarPdfDiagnostico(cache, mode){
       const urg = pend.filter(f=>f.risk.prioridad==="CRITICA");
       if(urg.length){
         body("Lo más urgente:", {bold:true, size:10.5, lh:15});
-        urg.forEach(f=> body(`•  ${f.criterio.requisito}`, {size:10.5, lh:14, indent:8}));
+        // En regulatorios se usa la nota del evaluador (dice qué pasó: "bichectomía sin licencia"), no el título genérico.
+        urg.forEach(f=> body(`•  ${(f.origen!=="libre" && (f.nota||"").trim()) ? f.nota.trim() : f.criterio.requisito}`, {size:10.5, lh:14, indent:8}));
         y += 4;
       }
       body("Qué significa: en una visita de verificación, los puntos críticos son los que más exponen a la clínica a una sanción, como una multa o la suspensión de actividades. Los de prioridad alta y media suelen quedar como observaciones que deben corregirse en un plazo.", {size:10.5, lh:15});
@@ -4751,6 +4796,7 @@ async function generarPdfDiagnostico(cache, mode){
 
   heading("Conclusión", 13);
   body(`El presente documento constituye un diagnóstico de revisión realizado con base en la información, documentación y evidencia recabada durante la visita del ${ev.fecha_visita?fechaLarga(ev.fecha_visita):"(fecha no registrada)"}. No sustituye una visita de verificación ni una resolución emitida por la autoridad sanitaria.`);
+  if(remota){ y += 4; body(AVISO_REMOTA, {size:10, color:SOFT}); }
   if(siguientePaso){ try{ y += 6; siguientePaso(); }catch(spErr){ console.warn(spErr); } }
 
   // ---------- Levantamiento de sitio: lo registrado en el inventario (equipos, personal, etc.) ----------
