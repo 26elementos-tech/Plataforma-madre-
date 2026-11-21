@@ -2525,16 +2525,31 @@ async function generarIndiceCarpetaDep(ev){
   ]);
   const enSnap = new Set((snapR.data||[]).map(x=>x.criterio_id));
   const ids = [...enSnap];
+  // Universo que le correspondería en un check-up completo (mismo giro y servicios): lo que no se
+  // revisó en este nivel se muestra como "No revisado en este nivel", sin captura adicional.
+  let enCompleto = new Set();
+  try{
+    if(ev.nivel_checkup && ev.nivel_checkup!=="completo"){
+      const { data: evRow } = await sb.from("evaluaciones").select("facts,area_id").eq("id", ev.id).single();
+      if(evRow && evRow.area_id){
+        const { data: uni } = await sb.rpc("calcular_criterios_aplicables", {p_facts: evRow.facts||{}, p_nivel:"completo", p_area_id: evRow.area_id});
+        enCompleto = new Set((uni||[]).map(u=>u.criterio_id));
+      }
+    }
+  }catch(e){ console.warn("No se pudo calcular el universo completo:", e); }
   const dep = ids.some(i=>i.startsWith("pc-")) ? "proteccion_civil" : ids.some(i=>i.startsWith("stps-")) ? "stps" : "cofepris";
   const conf = CARPETAS_DEP[dep];
   const resp = {}; (respR.data||[]).forEach(r=>{ resp[r.criterio_id] = r.estatus; });
   const evIds = [ev.id, ...((segR.data||[]).map(x=>x.id))];
   const { data: hs } = await sb.from("hallazgos").select("criterio_id,estatus_accion").in("evaluacion_id", evIds).in("estatus_accion", ["corregido","verificado"]);
   const corregidos = new Set((hs||[]).map(h=>h.criterio_id).filter(Boolean));
-  const ORDEN = {"Falta":0, "Incompleto":1, "Por verificar":2, "Lo tiene":3};
+  const ORDEN = {"Falta":0, "Incompleto":1, "Por verificar":2, "Lo tiene":3, "No revisado en este nivel":4};
   const carpetas = conf.carpetas.map(cp=>({...cp, docs: cp.items.map(it=>{
     const aplican = (it.ids||[]).filter(i=>enSnap.has(i));
-    if(!aplican.length && !it.siempre) return null;
+    if(!aplican.length && !it.siempre){
+      if((it.ids||[]).some(i=>enCompleto.has(i))) return {doc:it.t, estatus:"No revisado en este nivel", vigencia:it.v||"", nota:it.n||"", rec:!!it.rec};
+      return null;
+    }
     const naTodos = aplican.length && aplican.every(i=>resp[i]==="no_aplica");
     if(naTodos) return null;
     let estatus;
@@ -2556,7 +2571,7 @@ async function generarIndiceCarpetaDep(ev){
   const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight(), margin = 48, maxW = pageW - margin*2;
   let y = margin;
   const NAVY=[15,42,67], INK=[15,24,34], SOFT=[58,70,84];
-  const ST = {"Lo tiene":[46,125,79], "Lo tiene (corregido)":[46,125,79], "Incompleto":[184,134,11], "Falta":[179,38,30], "Por verificar":[120,130,140], "Recomendado":[46,109,164]};
+  const ST = {"Lo tiene":[46,125,79], "Lo tiene (corregido)":[46,125,79], "Incompleto":[184,134,11], "Falta":[179,38,30], "Por verificar":[120,130,140], "Recomendado":[46,109,164], "No revisado en este nivel":[160,165,172], "No revisado":[160,165,172]};
   const checkBreak = need=>{ if(y+need > pageH-margin){ doc.addPage(); y=margin; } };
   const body = (t,o)=>{ o=o||{}; doc.setFont("helvetica",o.bold?"bold":"normal"); doc.setFontSize(o.size||10.5); doc.setTextColor(...(o.color||INK));
     doc.splitTextToSize(String(t||""), maxW-(o.indent||0)).forEach(l=>{ checkBreak(o.lh||14); doc.text(l, margin+(o.indent||0), y); y+=o.lh||14; }); };
@@ -2575,8 +2590,9 @@ async function generarIndiceCarpetaDep(ev){
   // resumen
   const todos = carpetas.flatMap(c=>c.docs);
   const cnt = k => todos.filter(d=>d.estatus===k || (k==="Lo tiene" && d.estatus==="Lo tiene (corregido)")).length;
-  const cards = [["Lo tiene",cnt("Lo tiene")],["Incompleto",cnt("Incompleto")],["Falta",cnt("Falta")],["Por verificar",cnt("Por verificar")],["Recomendado",cnt("Recomendado")]];
-  const cw = (maxW-32)/5; checkBreak(62);
+  const nNoRev = cnt("No revisado en este nivel");
+  const cards = [["Lo tiene",cnt("Lo tiene")],["Incompleto",cnt("Incompleto")],["Falta",cnt("Falta")],["Por verificar",cnt("Por verificar")],["Recomendado",cnt("Recomendado")]].concat(nNoRev?[["No revisado",nNoRev]]:[]);
+  const cw = (maxW-8*(cards.length-1))/cards.length; checkBreak(62);
   cards.forEach(([k,n],i)=>{ const x = margin+i*(cw+8); doc.setFillColor(246,246,243); doc.roundedRect(x, y, cw, 50, 6, 6, "F");
     doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(...ST[k]); doc.text(String(n), x+cw/2, y+25, {align:"center"});
     doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(...SOFT); doc.text(k, x+cw/2, y+40, {align:"center"}); });
@@ -2600,7 +2616,7 @@ async function generarIndiceCarpetaDep(ev){
       doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(...NAVY); doc.text(code, margin+16, y);
       doc.setTextColor(...INK); dl.forEach((t,i)=>doc.text(t, margin+52, y+i*13));
       doc.setFillColor(...ST[d.estatus]); doc.roundedRect(pageW-margin-pillW, y-10, pillW, 15, 7.5, 7.5, "F");
-      doc.setFontSize(8); doc.setTextColor(255,255,255); doc.text(d.estatus, pageW-margin-pillW/2, y, {align:"center"});
+      doc.setFontSize(8); doc.setTextColor(255,255,255); doc.text(d.estatus==="No revisado en este nivel" ? "No revisado" : d.estatus, pageW-margin-pillW/2, y, {align:"center"});
       y += dl.length*13;
       doc.setFont("helvetica","normal"); doc.setFontSize(8.5); doc.setTextColor(...SOFT);
       doc.text(`${d.vigencia ? d.vigencia + "  ·  " : ""}Archivo: ${archivo}`, margin+52, y); y += 11;
@@ -2620,6 +2636,7 @@ async function generarIndiceCarpetaDep(ev){
   let x = margin; doc.setFontSize(9.5); doc.setTextColor(...SOFT); cols.forEach(([t,w])=>{ doc.text(t, x+4, y); x+=w; }); y += 6;
   for(let i=0;i<6;i++){ checkBreak(22); doc.setDrawColor(200,200,195); doc.rect(margin, y, maxW, 20); let xx=margin; cols.slice(0,-1).forEach(([,w])=>{ xx+=w; doc.line(xx,y,xx,y+20); }); y+=20; }
   y += 12;
+  if(nNoRev) body(`No revisado en este nivel = documento que le corresponde por su giro y servicios, pero que no forma parte del check-up ${ev.nivel_checkup} que se realizó. Se recomienda revisarlo en un check-up completo.`, {size:8.5, color:SOFT, lh:11});
   body("Recomendado = buena práctica, no requisito. Por verificar = documento aplicable que no se revisó en la visita. Índice preventivo; no sustituye una visita de verificación ni una resolución de la autoridad.", {size:8.5, color:SOFT, lh:11});
 
   const fileName = `CARPETAS-${carpetaSlug(conf.label,2)}-${carpetaSlug(clinica,4)}-${hoy}.pdf`;
