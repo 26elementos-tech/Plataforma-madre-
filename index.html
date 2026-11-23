@@ -190,9 +190,31 @@ input[type=text],input[type=email],input[type=password],select{
 <script>setTimeout(function(){ var e=document.getElementById("boot-slow"); if(e) e.style.display="block"; }, 8000);</script>
 
 <!-- Librerías: si el CDN principal falla, se usa uno alterno. jsPDF se carga sin bloquear la pantalla (solo se usa al generar PDFs). -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" onerror="document.write('<script src=&quot;https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js&quot;><\/script>')"></script>
-<script async src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js';document.head.appendChild(s);"></script>
 <script>
+/* Cargador: descarga supabase-js con tiempo límite y servidor alterno; luego arranca la app.
+   Así un CDN lento o bloqueado por la red celular no deja la pantalla en negro. */
+(function(){
+  var SRC = ["https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js",
+             "https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"];
+  var i = 0, done = false;
+  function start(){ if(done) return; done = true;
+    var m = document.getElementById("app-main"); var s = document.createElement("script");
+    s.textContent = m.textContent; document.body.appendChild(s); }
+  function next(){
+    if(window.supabase){ start(); return; }
+    if(i >= SRC.length){ start(); return; } // la app muestra su propio mensaje de error
+    var s = document.createElement("script"), t;
+    s.src = SRC[i++];
+    s.onload = function(){ clearTimeout(t); if(window.supabase) start(); else next(); };
+    s.onerror = function(){ clearTimeout(t); next(); };
+    t = setTimeout(function(){ s.onload = function(){ if(window.supabase) start(); }; s.onerror = null; next(); }, 7000);
+    document.head.appendChild(s);
+  }
+  if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", next); else next();
+})();
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js';document.head.appendChild(s);"></script>
+<script type="text/plain" id="app-main">
 /* ======================================================================
    PLATAFORMA MADRE | ELEMENTOS FINANCIEROS — Frontend Etapa 1
    Supabase es la única fuente de datos. Sin datos simulados, sin backend
