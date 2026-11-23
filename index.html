@@ -182,10 +182,16 @@ input[type=text],input[type=email],input[type=password],select{
 </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app"><div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:#0F2A43;color:#E9D8A6;font-family:Georgia,serif;text-align:center;padding:24px">
+  <div style="font-size:20px">Elementos Financieros</div>
+  <div style="font-family:system-ui,sans-serif;font-size:14px;color:#cfd6de">Cargando la plataforma…</div>
+  <div id="boot-slow" style="display:none;font-family:system-ui,sans-serif;font-size:13px;color:#cfd6de;max-width:300px">La conexión está lenta. Si no carga en un minuto, prueba con wifi o recarga la página.</div>
+</div></div>
+<script>setTimeout(function(){ var e=document.getElementById("boot-slow"); if(e) e.style.display="block"; }, 8000);</script>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<!-- Librerías: si el CDN principal falla, se usa uno alterno. jsPDF se carga sin bloquear la pantalla (solo se usa al generar PDFs). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" onerror="document.write('<script src=&quot;https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js&quot;><\/script>')"></script>
+<script async src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js';document.head.appendChild(s);"></script>
 <script>
 /* ======================================================================
    PLATAFORMA MADRE | ELEMENTOS FINANCIEROS — Frontend Etapa 1
