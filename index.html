@@ -5831,7 +5831,7 @@ const FIN_VERSION = "fin-v1";
 const FIN_SUPUESTOS_DEF = {mesesReserva:3, rendimientoRef:7, multiplo:2, multiploIndependiente:3, gCons:-10, gBase:0, gOpt:15};
 const FIN_SECCIONES = [
   {id:"ingresos", nombre:"Ingresos", sub:"Cuánto vende la clínica y cómo cobra"},
-  {id:"tratamientos", nombre:"Tratamientos principales", sub:"Hasta 5: precio, cuántos al mes y costo de insumo"},
+  {id:"tratamientos", nombre:"Servicios principales", sub:"Hasta 5 servicios: cuánto cobra, cuántos hace al mes y cuánto le cuesta el material"},
   {id:"gastos", nombre:"Gastos y deudas", sub:"Lo que cuesta operar cada mes"},
   {id:"medico", nombre:"El médico", sub:"Cuánto retira y cuánto trabaja"},
   {id:"efectivo", nombre:"Efectivo y orden fiscal", sub:"Dónde está el dinero y cómo se factura"},
@@ -5878,7 +5878,44 @@ const FIN_CAMPOS = {
     {k:"gOpt", l:"Crecimiento anual – escenario optimista (%)", u:"%"},
   ],
 };
-const finN = v => { if(v===null||v===undefined||v==="") return null; const n = parseFloat(String(v).replace(/[^0-9.\-]/g,"")); return isFinite(n) ? n : null; };
+const finN = v => {
+  if(v===null||v===undefined||v==="") return null;
+  let t = String(v).toLowerCase().replace(/,/g,"").trim();
+  const mult = /\bmill(ó|o)n|\bmdp\b/.test(t) ? 1e6 : (/\bmil\b|\bk\b/.test(t) ? 1000 : 1);
+  const nums = (t.match(/\d+(\.\d+)?/g)||[]).map(Number);
+  if(!nums.length) return null;
+  // Un rango ("80000 a 100000", "80-100 mil") se toma como su punto medio
+  const n = (nums.length>=2 && /\d\s*(a|-|–|y|al)\s*\$?\d/.test(t)) ? (nums[0]+nums[1])/2 : nums[0];
+  const r = n*mult; return isFinite(r) ? r : null;
+};
+/* Cómo preguntarle cada dato al médico, con ejemplo. La etiqueta técnica (l) se queda para el PDF. */
+const FIN_AYUDA = {
+  venta:{q:"En un mes normal, ¿cuánto dinero entra a la clínica por consultas y tratamientos?", ej:"Puedes escribir un rango: «80 a 100 mil». Si no lo sabe, que piense en lo que entra a la cuenta y en efectivo en un mes típico."},
+  otrosIngresos:{q:"¿Entra dinero por otra cosa que no sean consultas? (renta de un consultorio, venta de productos, cursos)", ej:"Si no hay, pon 0."},
+  pctEfectivo:{q:"De cada 10 pacientes, ¿cuántos pagan en efectivo?", ej:"Escríbelo como porcentaje: 3 de cada 10 = 30. Los tres tipos de pago deben sumar 100."},
+  pctTarjeta:{q:"De cada 10 pacientes, ¿cuántos pagan con tarjeta?", ej:"5 de cada 10 = 50."},
+  pctTransferencia:{q:"De cada 10 pacientes, ¿cuántos pagan por transferencia?", ej:"2 de cada 10 = 20."},
+  comisionTerminal:{q:"¿Cuánto le cobra el banco o la terminal por cada pago con tarjeta?", ej:"Suele ser entre 2.5 y 4%. Viene en el estado de cuenta de la terminal."},
+  renta:{q:"¿Cuánto paga de renta del local al mes?", ej:"Si el local es propio, pon 0 (y anótalo en notas)."},
+  nomina:{q:"¿Cuánto paga al mes en sueldos de su equipo (recepción, asistentes, terapeutas de planta)?", ej:"No incluyas lo que se paga el doctor a sí mismo; eso va más adelante."},
+  honorarios:{q:"¿Cuánto paga al mes a gente externa que cobra por honorarios? (otros médicos, aplicadores, contador)", ej:"Si a alguien se le paga por paciente, estima el promedio del mes."},
+  servicios:{q:"¿Cuánto paga al mes de luz, agua, internet y teléfono, todo junto?", ej:"Un aproximado está bien."},
+  software:{q:"¿Paga alguna aplicación o sistema? (agenda, expediente, facturación)", ej:"Suma todas las suscripciones del mes."},
+  publicidad:{q:"¿Cuánto invierte al mes en publicidad? (anuncios en redes, community manager, volantes)", ej:"Si no invierte, pon 0."},
+  mantenimiento:{q:"¿Cuánto gasta al mes, en promedio, en mantenimiento de equipos y del local?", ej:"Si es una vez al año, divide entre 12."},
+  otrosGastos:{q:"¿Hay otro gasto fijo cada mes que no hayamos mencionado? (limpieza, papelería, seguros)", ej:"Súmalos todos."},
+  pagoDeudas:{q:"¿Paga algún crédito cada mes? (equipos a meses, préstamo, arrendamiento)", ej:"La mensualidad total. Si no hay, pon 0."},
+  saldoDeudas:{q:"¿Cuánto le falta por pagar de esos créditos, en total?", ej:"Un aproximado está bien."},
+  retiro:{q:"En un mes normal, ¿cuánto dinero se lleva usted de la clínica para sus gastos personales?", ej:"Sueldo, honorarios o lo que retire; un rango está bien."},
+  horasSemana:{q:"¿Cuántas horas a la semana pasa atendiendo pacientes en la clínica?", ej:"Ej.: lunes a viernes de 9 a 2 = 25 horas."},
+  formaPago:{q:"Lo que usted se lleva de la clínica, ¿cómo lo saca?", ej:"Si dice «lo tomo de la caja» o «me transfiero», es «Retira sin comprobante»."},
+  saldoCuentas:{q:"Normalmente, ¿cuánto dinero tiene la clínica en el banco?", ej:"El saldo típico a mitad de mes, no el máximo."},
+  pctEfectivoDeposita:{q:"Del efectivo que cobran, ¿cuánto termina depositado en el banco?", ej:"Todo = 100; la mitad = 50; nada = 0."},
+  efectivoFuera:{q:"¿Tiene efectivo guardado de la clínica fuera del banco? ¿Cuánto, aproximadamente?", ej:"Opcional. Si no quiere decirlo, déjalo en blanco."},
+  pctFacturado:{q:"De todo lo que cobran, ¿qué parte se factura?", ej:"Todo = 100; solo a quien la pide (unos 3 de cada 10) = 30."},
+  regimen:{q:"¿Con qué régimen está dada de alta la clínica ante el SAT?", ej:"Si no lo sabe, el contador lo sabe; puedes marcar «No sabe»."},
+  cuentasSeparadas:{q:"¿La clínica tiene su propia cuenta de banco, separada de la personal del doctor?", ej:"«En parte»: hay cuenta de la clínica, pero se pagan cosas personales con ella o al revés."},
+};
 const finM = n => (n===null||!isFinite(n)) ? "—" : (n<0?"-":"") + "$" + Math.round(Math.abs(n)).toLocaleString("es-MX");
 const finP = n => (n===null||!isFinite(n)) ? "—" : (Math.round(n*10)/10) + "%";
 
@@ -5991,7 +6028,7 @@ function renderFinWizard(){
       <div style="flex:1"><p class="brand">DIAGNÓSTICO FINANCIERO · ${ev.secIdx+1} DE ${total}</p><h1 style="font-size:18px">${esc(sec.nombre)}</h1></div></div>
       <div style="height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin-top:10px"><div style="height:4px;width:${Math.round(100*(ev.secIdx+1)/total)}%;background:var(--gold-500);border-radius:2px"></div></div></div>
     <div class="content">
-      <p class="muted small" style="margin:0 0 10px">${esc(sec.sub)}. Si el médico no da un dato, déjalo en blanco.</p>
+      <p class="muted small" style="margin:0 0 10px">${esc(sec.sub)}. Lee la pregunta tal cual al doctor. Aproximados y rangos están bien; si no lo sabe, toca «No sabe».</p>
       <div class="card" id="fin-form"></div>
       <div id="fin-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
       <div style="display:flex;gap:10px">${ev.secIdx>0?`<button class="btn btn-ghost" id="fin-prev" style="flex:1">← Anterior</button>`:""}
@@ -6002,17 +6039,38 @@ function renderFinWizard(){
   if(sec.id==="tratamientos"){
     D.tratamientos = D.tratamientos || [];
     while(D.tratamientos.length<5) D.tratamientos.push({});
-    form.innerHTML = D.tratamientos.map((t,i)=>`<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b class="small">Tratamiento ${i+1}</b>
-      <input type="text" data-t="${i}" data-k="nombre" value="${esc(t.nombre||"")}" placeholder="Nombre (ej. Toxina botulínica)" style="margin:6px 0">
-      <div style="display:flex;gap:6px"><input type="text" inputmode="decimal" data-t="${i}" data-k="precio" value="${esc(t.precio||"")}" placeholder="Precio $">
-      <input type="text" inputmode="decimal" data-t="${i}" data-k="cantidad" value="${esc(t.cantidad||"")}" placeholder="# al mes">
-      <input type="text" inputmode="decimal" data-t="${i}" data-k="costo" value="${esc(t.costo||"")}" placeholder="Costo insumo $"></div></div>`).join("");
+    form.innerHTML = `<div class="small" style="background:#FBF3E0;border-radius:8px;padding:8px 10px;margin-bottom:8px"><b>Pregúntale así:</b> «¿Cuáles son los 3 a 5 servicios que más hace? De cada uno: ¿cuánto cobra, cuántos hace al mes y cuánto le cuesta el material que usa en uno solo?»<br><span class="muted">El costo es solo del producto o material desechable de UN servicio (no sueldos ni renta). Si no usa material, pon 0.</span></div>` +
+      D.tratamientos.map((t,i)=>`<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b class="small">Servicio ${i+1}</b>
+      <input type="text" data-t="${i}" data-k="nombre" value="${esc(t.nombre||"")}" placeholder="¿Cómo se llama? (ej. Sesión de rehabilitación)" style="margin:6px 0">
+      <div style="display:flex;gap:6px">
+        <div style="flex:1"><div class="muted" style="font-size:11px">Cobra ($)</div><input type="text" inputmode="decimal" data-t="${i}" data-k="precio" value="${esc(t.precio||"")}" placeholder="ej. 800"></div>
+        <div style="flex:1"><div class="muted" style="font-size:11px">Hace al mes</div><input type="text" inputmode="decimal" data-t="${i}" data-k="cantidad" value="${esc(t.cantidad||"")}" placeholder="ej. 60"></div>
+        <div style="flex:1"><div class="muted" style="font-size:11px">Material por uno ($)</div><input type="text" inputmode="decimal" data-t="${i}" data-k="costo" value="${esc(t.costo||"")}" placeholder="ej. 50"></div></div></div>`).join("");
     form.querySelectorAll("[data-t]").forEach(inp=>inp.addEventListener("input",()=>{ D.tratamientos[+inp.dataset.t][inp.dataset.k] = inp.value.trim(); }));
   } else {
-    form.innerHTML = FIN_CAMPOS[sec.id].map(f=> f.sel
-      ? `<label>${esc(f.l)}</label><select data-k="${f.k}"><option value="">Selecciona</option>${f.sel.map(o=>`<option ${store[f.k]===o?"selected":""}>${esc(o)}</option>`).join("")}</select>`
-      : `<label>${esc(f.l)}${f.u==="$"?" (MXN)":f.u==="%"?" (%)":""}</label><input type="text" inputmode="decimal" data-k="${f.k}" value="${esc(store[f.k]??"")}">`).join("");
-    form.querySelectorAll("[data-k]").forEach(inp=>inp.addEventListener(inp.tagName==="SELECT"?"change":"input",()=>{ store[inp.dataset.k] = inp.value.trim(); }));
+    const esSup = sec.id==="supuestos";
+    const interp = (f, v) => { const n = finN(v); if(n===null || f.sel) return ""; return f.u==="$" ? `= ${finM(n)}${/\d\s*(a|-|–|al)\s*\$?\d/.test(String(v))?" (punto medio del rango)":""}` : f.u==="%" ? `= ${finP(n)}` : `= ${n}`; };
+    form.innerHTML = (esSup ? `<div class="small" style="background:#EEF3F8;border-radius:8px;padding:8px 10px;margin-bottom:8px">Esta sección es <b>solo para ti</b>; no se le pregunta al doctor. Puedes dejar los valores sugeridos.</div>` : "") +
+      FIN_CAMPOS[sec.id].map(f=>{ const a = FIN_AYUDA[f.k]; const titulo = (!esSup && a) ? a.q : f.l;
+        const ayuda = a ? `<div class="muted" style="font-size:12px;margin:2px 0 6px">${esc(a.ej)}</div>` : "";
+        return `<div style="padding:10px 0;border-bottom:1px solid var(--line)"><div style="font-weight:600;font-size:15px;line-height:1.3">${esc(titulo)}</div>${ayuda}` + (f.sel
+          ? `<select data-k="${f.k}"><option value="">Selecciona</option>${f.sel.map(o=>`<option ${store[f.k]===o?"selected":""}>${esc(o)}</option>`).join("")}</select>`
+          : `<div style="display:flex;gap:6px;align-items:center"><input type="text" inputmode="text" data-k="${f.k}" value="${esc(store[f.k]??"")}" placeholder="${f.u==="$"?"$ al mes":f.u==="%"?"0 a 100":""}" style="flex:1;min-width:0;width:auto;margin:0">
+              ${esSup ? "" : `<button type="button" class="btn btn-ghost" data-nose="${f.k}" style="width:auto;flex:none;padding:8px 10px;font-size:12px;white-space:nowrap;margin:0">No sabe</button>`}</div>
+             <div class="small" data-int="${f.k}" style="color:var(--navy-700);margin-top:3px">${esc(interp(f, store[f.k]))}</div>`) + `</div>`; }).join("") +
+      (sec.id==="ingresos" ? `<div class="small" id="fin-suma" style="margin-top:8px"></div>` : "");
+    const sumaPct = () => { const el = document.getElementById("fin-suma"); if(!el) return;
+      const t = ["pctEfectivo","pctTarjeta","pctTransferencia"].map(k=>finN(store[k])||0).reduce((a,b)=>a+b,0);
+      el.innerHTML = t ? (Math.round(t)===100 ? `<span style="color:#2E7D4F">✓ Las formas de pago suman 100%</span>` : `<span style="color:#B8860B">Las formas de pago suman ${Math.round(t)}%; deben sumar 100%.</span>`) : ""; };
+    D.__nosabe = D.__nosabe || [];
+    form.querySelectorAll("[data-k]").forEach(inp=>inp.addEventListener(inp.tagName==="SELECT"?"change":"input",()=>{
+      store[inp.dataset.k] = inp.value.trim(); D.__nosabe = D.__nosabe.filter(k=>k!==inp.dataset.k);
+      const f = FIN_CAMPOS[sec.id].find(x=>x.k===inp.dataset.k); const o = form.querySelector(`[data-int="${inp.dataset.k}"]`); if(o && f) o.textContent = interp(f, inp.value);
+      sumaPct(); }));
+    form.querySelectorAll("[data-nose]").forEach(b=>b.onclick=()=>{ const k=b.dataset.nose; store[k]=""; const i=form.querySelector(`[data-k="${k}"]`); if(i) i.value="";
+      if(!D.__nosabe.includes(k)) D.__nosabe.push(k); const o=form.querySelector(`[data-int="${k}"]`); if(o) o.textContent="Marcado: el doctor no lo sabe (quedará como pendiente en el reporte)."; sumaPct(); });
+    D.__nosabe.forEach(k=>{ const o=form.querySelector(`[data-int="${k}"]`); if(o && !store[k]) o.textContent="Marcado: el doctor no lo sabe."; });
+    sumaPct();
   }
   const guardar = async () => { const r = await finGuardar(ev); if(!r.ok){ const n=document.getElementById("fin-note"); if(n) n.textContent = r.offline ? "📴 Sin conexión: se guardará al recuperar señal." : "No se pudo guardar: "+(r.error?.message||""); } };
   document.getElementById("btn-back").onclick = async () => { await guardar(); go("expediente", {currentExpediente:{id:ev.expediente_id, nombre_expediente:ev.expediente_nombre}}); };
@@ -6099,6 +6157,9 @@ async function generarPdfFinMedico(ev, r){
     ["Tu punto de equilibrio", finM(r.equilibrio), "Venta mínima mensual para no perder"],
     ["Sobrante después de deudas y tu retiro", finM(r.sobrante), r.sobrante<0?"Hoy retiras más de lo que deja":"Al mes", r.sobrante<0?c.RED:c.NAVY],
   ]);
+  { const ns = ((ev.datos||{}).__nosabe||[]).filter(k=>!finN((ev.datos||{})[k]));
+    if(ns.length){ const lab = k => { for(const sec of Object.keys(FIN_CAMPOS)){ const f = FIN_CAMPOS[sec].find(x=>x.k===k); if(f) return f.l; } return k; };
+      c.body(`Datos pendientes (no se tenían a la mano; las cifras relacionadas pueden cambiar al completarlos): ${ns.map(lab).join("; ")}.`, {size:9, color:c.SOFT}); } }
   if(r.tr.length){
     c.heading("Tus tratamientos: cuál te deja más");
     r.tr.slice().sort((a,b)=>b.contribucion-a.contribucion).forEach(t=>c.row(`${t.nombre}${t===r.estrella?"  (el que más te deja)":""}`, `${finM(t.contribucion)}/mes · margen ${finP(t.margen)}`, t===r.estrella));
