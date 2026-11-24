@@ -1594,6 +1594,58 @@ const $app = document.getElementById("app");
 function esc(s){ return (s==null?"":String(s)).replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
 function go(screen, extra){ document.querySelectorAll(".fab-flag").forEach(x=>x.remove()); state.screen = screen; Object.assign(state, extra||{}); render(); window.scrollTo(0,0); saveResume(); }
 
+/* ------------------------- Perfil fisioterapia (solo Fiscal y Legal) -------------------------
+   Si el expediente es de una clínica de fisioterapia, el check-up fiscal y el legal se muestran
+   con su lenguaje (titular en vez de médico, terapeutas externos, IVA de fisioterapia, RC de
+   fisioterapia). Solo cambia el texto que se ve y el PDF; las respuestas se guardan igual,
+   así que los cálculos y los demás expedientes siguen la ruta normal. */
+function esPerfilFisio(nombre){ return /fisioterap/i.test(nombre||""); }
+function perfilFisioActual(){
+  const sc = state.screen||"";
+  if(/^fis-/.test(sc)) return esPerfilFisio(state.fisEval && state.fisEval.expediente_nombre);
+  if(/^leg-/.test(sc)) return esPerfilFisio(state.legEval && state.legEval.expediente_nombre);
+  return false;
+}
+const FISIO_TXT = [
+  ["Tiene claro si sus tratamientos estéticos causan IVA", "Tiene claro si sus servicios de fisioterapia causan IVA (solo están exentos los que requieren título de médico, LIVA art. 15-XIV)"],
+  ["(tratamientos estéticos)", "(fisioterapia: exenta solo si requiere título de médico, LIVA art. 15-XIV; validar con el contador)"],
+  ["tratamiento del IVA en servicios estéticos", "tratamiento del IVA en los servicios de fisioterapia"],
+  ["Uso de suelo para servicios médicos", "Uso de suelo para servicios de salud"],
+  ["Contratos con médicos, aplicadores y proveedores", "Contratos con terapeutas externos y proveedores"],
+  ["Contratos con médicos y aplicadores externos", "Contratos con terapeutas y especialistas externos"],
+  ["Médicos o aplicadores externos", "Terapeutas o especialistas externos"],
+  ["responsabilidad civil profesional médica", "responsabilidad civil profesional (fisioterapia)"],
+  ["Responsabilidad civil profesional médica", "Responsabilidad civil profesional (fisioterapia)"],
+  ["El RC cubre procedimientos estéticos", "El RC cubre fisioterapia y rehabilitación"],
+  ["Cubre estéticos", "Cubre fisioterapia"],
+  ["procedimientos estéticos", "tratamientos de fisioterapia y rehabilitación"],
+  ["tratamientos estéticos", "tratamientos de fisioterapia"],
+];
+function adFisio(t){
+  if(typeof t !== "string" || !t) return t;
+  FISIO_TXT.forEach(([a,b])=>{ if(t.indexOf(a)>=0 && t.indexOf(b)<0) t = t.split(a).join(b); });
+  return t.replace(/\b(el|del|al|El|Del|Al) médico\b/g, "$1 titular");
+}
+function aplicarFisioDom(root){
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let n;
+  while((n = w.nextNode())){ const v = n.nodeValue, nv = adFisio(v); if(nv !== v) n.nodeValue = nv; }
+}
+(function(){
+  let pend = false;
+  new MutationObserver(()=>{
+    if(pend || !perfilFisioActual()) return; pend = true;
+    Promise.resolve().then(()=>{ pend = false; if(perfilFisioActual()) aplicarFisioDom($app); });
+  }).observe($app, {childList:true, subtree:true, characterData:true});
+})();
+function fisioPdf(c, ev){
+  if(!ev || !esPerfilFisio(ev.expediente_nombre)) return c;
+  const doc = c.doc, t0 = doc.text.bind(doc), s0 = doc.splitTextToSize.bind(doc);
+  const ad = x => Array.isArray(x) ? x.map(adFisio) : adFisio(x);
+  doc.text = function(txt, ...r){ return t0(ad(txt), ...r); };
+  doc.splitTextToSize = function(txt, ...r){ return s0(ad(txt), ...r); };
+  return c;
+}
+
 /* ------------------------- Retomar donde te quedaste -------------------------
    Si la app se cierra (el visor la descarga de memoria, se bloquea el teléfono), al volver
    a entrar ofrece regresar a la misma pantalla con lo que ya habías capturado del wizard.
@@ -6329,6 +6381,7 @@ async function fisIniciar(exp){
       const pf = finN(f.pctFacturado); if(pf!==null) datos.facturaCobros = pf>=95 ? "Siempre" : pf>=40 ? "Solo si la piden" : "Casi nunca";
     }
   }catch(e){}
+  if(esPerfilFisio(exp.nombre_expediente) && !datos.especialidad) datos.especialidad = "Fisioterapia / rehabilitación";
   state.fisEval = {id:null, expediente_id:exp.id, expediente_nombre:exp.nombre_expediente, fecha:new Date().toISOString().slice(0,10), estatus:"borrador", datos, documentos:{}, fiscalista:"", pendientes:[], secIdx:0};
   go("fis-wizard");
 }
@@ -6345,7 +6398,8 @@ async function fisGuardar(ev, estatus){
 /* ------------------------- Captura: 5 grupos + documentos ------------------------- */
 function renderFisWizard(){
   const ev = state.fisEval; if(!ev){ go("dashboard"); return; }
-  const GW = [...FIS_GRUPOS, FIS_PERFIL];
+  const fisio = esPerfilFisio(ev.expediente_nombre);
+  const GW = [...FIS_GRUPOS, fisio ? {...FIS_PERFIL, preguntas: FIS_PERFIL.preguntas.map(p=>p.k==="especialidad" ? {...p, o:[["Fisioterapia / rehabilitación","n"], ...p.o]} : p)} : FIS_PERFIL];
   const total = GW.length + 1, esDocs = ev.secIdx === GW.length;
   const g = esDocs ? null : GW[ev.secIdx];
   $app.innerHTML = `
@@ -6453,7 +6507,7 @@ async function generarPdfFisMedico(ev){
   if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
   const r = fisCalcular(ev.datos); const datosEst = await getDatosEst(ev.expediente_id);
   const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
-  const c = finPdfBase(); const {doc} = c;
+  const c = finPdfBase(); fisioPdf(c, ev); const {doc} = c;
   drawPortadaPdf(doc, {titulo:"Semáforo fiscal de tu clínica", subtitulo:"Dónde estás hoy frente al SAT", cliente:clinica, detalle:`Fecha: ${ev.fecha}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
   c.header("Tu semáforo fiscal", clinica);
   c.checkBreak(90); fisLuz(c, c.margin+28, c.y+24, r.global, 26);
@@ -6488,7 +6542,7 @@ async function generarPdfFisFiscalista(ev){
   const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
   let fin = null;
   try{ const { data } = await sb.from("evaluaciones_financieras").select("*").eq("expediente_id", ev.expediente_id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1); if(data && data[0]) fin = data[0]; }catch(e){}
-  const c = finPdfBase(); const {doc} = c;
+  const c = finPdfBase(); fisioPdf(c, ev); const {doc} = c;
   c.header("Paquete de entrada — especialista fiscal", clinica);
   c.body("CONFIDENCIAL · Documento interno de la Red Elementos Financieros. No entregar al cliente.", {bold:true, size:9.5, color:c.RED});
   datosEstLineas(datosEst).forEach(l=>c.body(l, {size:9.5, color:c.SOFT, lh:13}));
@@ -6807,7 +6861,7 @@ async function generarPdfLegMedico(ev){
   if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
   const r = legCalcular(ev.datos); const datosEst = await getDatosEst(ev.expediente_id);
   const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
-  const c = finPdfBase(); const {doc} = c;
+  const c = finPdfBase(); fisioPdf(c, ev); const {doc} = c;
   drawPortadaPdf(doc, {titulo:"Mapa de riesgos y protección", subtitulo:"Sobre qué está parada tu clínica y qué la protege", cliente:clinica, detalle:`Fecha: ${ev.fecha}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
   c.header("Riesgos y protección de tu clínica", clinica);
   c.checkBreak(90); fisLuz(c, c.margin+28, c.y+24, r.global, 26);
@@ -6840,7 +6894,7 @@ async function generarPdfLegAbogado(ev){
   if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
   const r = legCalcular(ev.datos); const datosEst = await getDatosEst(ev.expediente_id); const d = ev.datos;
   const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
-  const c = finPdfBase();
+  const c = finPdfBase(); fisioPdf(c, ev);
   c.header("Paquete de entrada — abogado", clinica);
   c.body("CONFIDENCIAL · Documento interno de la Red Elementos Financieros. No entregar al cliente.", {bold:true, size:9.5, color:c.RED});
   datosEstLineas(datosEst).forEach(l=>c.body(l, {size:9.5, color:c.SOFT, lh:13}));
@@ -6875,7 +6929,7 @@ async function generarPdfLegSuscripcion(ev){
   const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
   let fin = null, trats = [];
   try{ const { data } = await sb.from("evaluaciones_financieras").select("*").eq("expediente_id", ev.expediente_id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1); if(data && data[0]){ fin = finCalcular(data[0].datos, data[0].supuestos); trats = fin.tr; } }catch(e){}
-  const c = finPdfBase();
+  const c = finPdfBase(); fisioPdf(c, ev);
   c.header("Ficha de suscripción — seguros del negocio", clinica);
   c.body("USO INTERNO · Elementos Financieros. Datos para cotizar; confirmar con el médico antes de enviar a la aseguradora.", {bold:true, size:9.5, color:c.RED});
   datosEstLineas(datosEst).forEach(l=>c.body(l, {size:9.5, color:c.SOFT, lh:13})); c.y+=6;
@@ -7310,7 +7364,7 @@ function fisOportunidades2027(d, f){
   const efectivoSinBanco = f && ((f.efectivoNoDepMes||0) > 0 || (f.efectivoFuera||0) > 0);
   const pf = d.operaComo === "Persona física – actividad profesional";
   const hasta5 = ["Menos de $3.5 millones","De $3.5 a $5 millones"].includes(d.ingresosRango);
-  const estetico = ["Medicina estética","Cirugía plástica"].includes(d.especialidad);
+  const estetico = ["Medicina estética","Cirugía plástica","Fisioterapia / rehabilitación"].includes(d.especialidad);
   const motivosReg = [];
   if(d.pendientes2025 === "Sí") motivosReg.push("impuestos pendientes de 2025 o antes");
   if(d.mensuales === "Atrasadas") motivosReg.push("declaraciones mensuales atrasadas");
