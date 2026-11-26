@@ -38,7 +38,8 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(req.url);
 
   // La app: primero internet (versión más nueva). Si no hay señal o tarda más de 4 s, la copia guardada.
-  if (req.mode === "navigate" || (url.origin === location.origin && (url.pathname.endsWith("/") || url.pathname.endsWith("index.html")))) {
+  // Solo la app (carpeta raíz o index.html). Otras páginas del sitio, como checkup-medico.html, pasan directo.
+  if (url.origin === location.origin && (url.pathname.endsWith("/") || url.pathname.endsWith("index.html"))) {
     e.respondWith((async () => {
       const c = await caches.open(CACHE);
       const guardada = (await c.match("./")) || (await c.match(req));

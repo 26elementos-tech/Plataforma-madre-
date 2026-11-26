@@ -1604,6 +1604,7 @@ function perfilFisioActual(){
   const sc = state.screen||"";
   if(/^fis-/.test(sc)) return esPerfilFisio(state.fisEval && state.fisEval.expediente_nombre);
   if(/^leg-/.test(sc)) return esPerfilFisio(state.legEval && state.legEval.expediente_nombre);
+  if(/^rie-/.test(sc)) return esPerfilFisio(state.rieEval && state.rieEval.expediente_nombre);
   return false;
 }
 const FISIO_TXT = [
@@ -1617,6 +1618,8 @@ const FISIO_TXT = [
   ["responsabilidad civil profesional médica", "responsabilidad civil profesional (fisioterapia)"],
   ["Responsabilidad civil profesional médica", "Responsabilidad civil profesional (fisioterapia)"],
   ["El RC cubre procedimientos estéticos", "El RC cubre fisioterapia y rehabilitación"],
+  [" (incluidos los estéticos, si los hace)", ""],
+  ["RC profesional médica", "RC profesional (fisioterapia)"],
   ["Cubre estéticos", "Cubre fisioterapia"],
   ["procedimientos estéticos", "tratamientos de fisioterapia y rehabilitación"],
   ["tratamientos estéticos", "tratamientos de fisioterapia"],
@@ -1827,6 +1830,8 @@ async function render(){
   if(state.screen==="fin-wizard") return renderFinWizard();
   if(state.screen==="fis-wizard") return renderFisWizard();
   if(state.screen==="leg-wizard") return renderLegWizard();
+  if(state.screen==="rie-wizard") return renderRieWizard();
+  if(state.screen==="rie-resultado") return renderRieResultado();
   if(state.screen==="exp-audit") return renderExpAudit();
   if(state.screen==="equipo") return renderEquipo();
   if(state.screen==="radar2027") return renderRadar2027();
@@ -5134,9 +5139,10 @@ async function renderTabClinica(body, exp){
         <button class="action-btn" id="btn-op-new" style="margin-top:10px;margin-bottom:0"><span>+ Nuevo Check-up Operativo</span><span>→</span></button>
       </div>
     </div>
-    <div id="fin-slot"></div><div id="fis-slot"></div><div id="leg-slot"></div>
+    <div id="fin-slot"></div><div id="fis-slot"></div><div id="leg-slot"></div><div id="rie-slot"></div>
     ${renderModulosProximos("Siguientes módulos", "En construcción en la Fase 5.", CLINICA_MODS.filter(m=>!["Procesos","Finanzas","Fiscalidad"].includes(m.nombre)))}`;
   renderCardLegal(document.getElementById("leg-slot"), exp);
+  renderCardRiesgos(document.getElementById("rie-slot"), exp);
   renderCardFinanzas(document.getElementById("fin-slot"), exp);
   renderCardFiscal(document.getElementById("fis-slot"), exp);
   document.getElementById("btn-op-new").onclick = () => opIniciar(exp);
@@ -6639,27 +6645,6 @@ const LEG_GRUPOS = [
     {k:"sucesionClinica", t:"Si el médico falta, está definido quién se queda con la clínica y cómo sigue", o:[["Sí, por escrito","v"],["Se ha platicado","a"],["No","r"]]},
     {k:"compraventaSocios", t:"Acuerdo de compraventa entre socios ante fallecimiento o invalidez", si:LEG_SOCIOS, o:[["Sí, con fondeo (seguro)","v"],["Sí, sin fondeo","a"],["No","r"]]},
   ]},
-  {id:"seguros", nombre:"Seguros del negocio", preguntas:[
-    {k:"rc", t:"Seguro de responsabilidad civil profesional médica", o:[["Tiene","v"],["No tiene","r"],["No sabe","r"]]},
-    {k:"rcAseguradora", t:"Aseguradora del RC", txt:true, si:d=>d.rc==="Tiene"},
-    {k:"rcSuma", t:"Suma asegurada del RC (MXN)", num:true, si:d=>d.rc==="Tiene"},
-    {k:"rcVigencia", t:"Vigencia del RC (fecha de fin, AAAA-MM-DD)", txt:true, si:d=>d.rc==="Tiene"},
-    {k:"rcDeducible", t:"Deducible del RC", txt:true, si:d=>d.rc==="Tiene"},
-    {k:"rcEsteticos", t:"El RC cubre procedimientos estéticos", si:d=>d.rc==="Tiene", o:[["Sí","v"],["No","r"],["No sabe","r"]]},
-    {k:"rcPersonal", t:"El RC cubre a todo el personal que aplica tratamientos", si:d=>d.rc==="Tiene", o:[["Sí","v"],["Solo al médico","a"],["No sabe","a"]]},
-    {k:"rcDefensa", t:"Incluye defensa legal", si:d=>d.rc==="Tiene", o:[["Sí","v"],["No","a"],["No sabe","a"]]},
-    {k:"rcRetro", t:"Asegurado sin interrupción desde (año)", txt:true, si:d=>d.rc==="Tiene"},
-    {k:"rcSiniestros", t:"Reclamaciones previas al seguro", o:[["Ninguna","v"],["Sí","a"]]},
-    {k:"rcEstab", t:"RC del establecimiento (daños a terceros en el local)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
-    {k:"danos", t:"Seguro de daños del local, equipos y robo", o:[["Tiene","v"],["No tiene","r"],["No sabe","a"]]},
-    {k:"valorEquipos", t:"Valor aproximado de los equipos (MXN)", num:true},
-    {k:"interrupcion", t:"Seguro por interrupción del negocio", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
-    {k:"personaClave", t:"Seguro de persona clave (la clínica recibe dinero si el médico falta)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
-    {k:"intersocios", t:"Seguro intersocios", si:LEG_SOCIOS, o:[["Tiene","v"],["No tiene","r"],["No sabe","a"]]},
-    {k:"gmmColectivo", t:"GMM colectivo para el equipo", si:LEG_EMPLEADOS, o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
-    {k:"vidaGrupo", t:"Seguro de vida de grupo para el equipo", si:LEG_EMPLEADOS, o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
-    {k:"rcReferencia", t:"Suma de RC de referencia para este tipo de práctica (la defines tú; MXN)", num:true, sup:true},
-  ]},
 ];
 const LEG_DOCS = [
   {k:"acta", t:"Acta constitutiva, asambleas y poderes", si:LEG_MORAL},
@@ -6673,13 +6658,6 @@ const LEG_DOCS = [
   {k:"privacidad", t:"Aviso de privacidad y formatos de consentimiento de imagen"},
   {k:"marca", t:"Título o solicitud de registro de marca"},
   {k:"contingencias", t:"Documentos de quejas o demandas", si:d=>["quejas","demandas","laborales"].some(k=>d[k] && d[k]!=="Ninguna")},
-  {k:"polizas", t:"Pólizas de seguro vigentes de la clínica"},
-];
-const LEG_SEGUROS = [
-  {k:"rc", t:"Responsabilidad civil profesional médica"}, {k:"rcEstab", t:"RC del establecimiento"}, {k:"danos", t:"Daños, equipos y robo"},
-  {k:"interrupcion", t:"Interrupción del negocio"}, {k:"personaClave", t:"Persona clave"}, {k:"intersocios", t:"Intersocios", si:LEG_SOCIOS},
-  {k:"gmmColectivo", t:"GMM colectivo", si:LEG_EMPLEADOS, nota:"Puede ser deducible como previsión social si cumple requisitos: validar con el fiscalista."},
-  {k:"vidaGrupo", t:"Vida de grupo", si:LEG_EMPLEADOS},
 ];
 
 function legCalcular(datos){
@@ -6693,16 +6671,12 @@ function legCalcular(datos){
   // reglas cruzadas
   const extras = [];
   if(LEG_RENTA(d) && d.inversionLocal==="Sí" && d.contratoLocal && d.contratoLocal!=="Por escrito, vigencia mayor a 2 años") extras.push({grupo:"Local y permisos", t:"Inversión importante en un local con contrato corto o débil", nivel:"r"});
-  if(LEG_SOCIOS(d) && d.compraventaSocios!=="Sí, con fondeo (seguro)" && d.intersocios!=="Tiene") extras.push({grupo:"Continuidad legal", t:"Socios sin acuerdo de compraventa fondeado por seguro intersocios", nivel:"r"});
-  const ref = finN(d.rcReferencia), suma = finN(d.rcSuma);
-  const brechaRC = (d.rc==="Tiene" && ref && suma!==null && suma<ref) ? ref - suma : null;
-  if(brechaRC) extras.push({grupo:"Seguros del negocio", t:`Suma asegurada de RC por debajo de la referencia (faltan ${finM(brechaRC)})`, nivel:"a"});
-  if(d.rc==="Tiene" && d.rcVigencia && d.rcVigencia < new Date().toISOString().slice(0,10)) extras.push({grupo:"Seguros del negocio", t:"La póliza de RC está vencida", nivel:"r"});
+  const brechaRC = null; // Los seguros ahora viven en el módulo Riesgos y seguros
   const nivelesFrentes = grupos.map(x=>x.nivel).concat(extras.map(e=>e.nivel));
   const global = nivelesFrentes.includes("r") ? "r" : nivelesFrentes.includes("a") ? "a" : nivelesFrentes.every(n=>n==="x"||n==="n") ? "x" : "v";
   const riesgos = grupos.flatMap(x=>x.items.filter(i=>i.nivel==="r").map(i=>({grupo:x.g.nombre, t:i.p.t, resp:i.resp}))).concat(extras.filter(e=>e.nivel==="r").map(e=>({grupo:e.grupo, t:e.t, resp:""})));
   const atencion = grupos.flatMap(x=>x.items.filter(i=>i.nivel==="a").map(i=>({grupo:x.g.nombre, t:i.p.t, resp:i.resp}))).concat(extras.filter(e=>e.nivel==="a").map(e=>({grupo:e.grupo, t:e.t, resp:""})));
-  const seguros = LEG_SEGUROS.filter(s=>!s.si || s.si(d)).map(s=>({...s, estado: d[s.k]||"Sin dato", falta: d[s.k]!=="Tiene"}));
+  const seguros = [];
   return {grupos, extras, global, riesgos, atencion, brechaRC, seguros};
 }
 
@@ -6711,9 +6685,9 @@ async function renderCardLegal(container, exp){
   const card = document.createElement("div");
   card.className = "card area-card";
   card.innerHTML = `<div class="area-head" style="cursor:default"><div class="area-icon">⚖️</div>
-    <div style="flex:1;min-width:0"><div class="area-name">Legal y riesgos</div><div class="area-sub">Estructura, contratos, contingencias y seguros del negocio</div></div></div>
+    <div style="flex:1;min-width:0"><div class="area-name">Legal</div><div class="area-sub">Estructura, local, contratos, pacientes, marca y contingencias</div></div></div>
     <div class="area-body"><div id="leg-list"><div class="muted small">Cargando…</div></div>
-    <button class="action-btn" id="btn-leg-new" style="margin-top:10px;margin-bottom:0"><span>+ Nuevo check-up legal y de riesgos</span><span>→</span></button></div>`;
+    <button class="action-btn" id="btn-leg-new" style="margin-top:10px;margin-bottom:0"><span>+ Nuevo check-up legal</span><span>→</span></button></div>`;
   container.appendChild(card);
   card.querySelector("#btn-leg-new").onclick = () => legIniciar(exp);
   const list = card.querySelector("#leg-list");
@@ -6760,7 +6734,7 @@ function renderLegWizard(){
   const g = esDocs ? null : LEG_GRUPOS[ev.secIdx]; const d = ev.datos;
   $app.innerHTML = `
     <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
-      <div style="flex:1"><p class="brand">LEGAL Y RIESGOS · ${ev.secIdx+1} DE ${total}</p><h1 style="font-size:18px">${esDocs?"Documentos para el abogado":esc(g.nombre)}</h1></div></div>
+      <div style="flex:1"><p class="brand">LEGAL · ${ev.secIdx+1} DE ${total}</p><h1 style="font-size:18px">${esDocs?"Documentos para el abogado":esc(g.nombre)}</h1></div></div>
       <div style="height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin-top:10px"><div style="height:4px;width:${Math.round(100*(ev.secIdx+1)/total)}%;background:var(--gold-500);border-radius:2px"></div></div></div>
     <div class="content">
       <p class="muted small" style="margin:0 0 10px">${esDocs ? "Marca qué te entregó el médico (copias)." : "Las preguntas se ajustan según las respuestas: socios, personal, local, paquetes."}</p>
@@ -6808,15 +6782,13 @@ function renderLegResultado(){
   const docsAplican = LEG_DOCS.filter(dd=>(!dd.si || dd.si(ev.datos)) && ev.documentos[dd.k]!=="No aplica");
   $app.innerHTML = `
     <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
-      <div style="flex:1"><p class="brand">LEGAL Y RIESGOS</p><h1 style="font-size:18px">${esc(ev.expediente_nombre||"")}</h1></div></div></div>
+      <div style="flex:1"><p class="brand">LEGAL</p><h1 style="font-size:18px">${esc(ev.expediente_nombre||"")}</h1></div></div></div>
     <div class="content">
       <div class="card" style="display:flex;align-items:center;gap:14px">
         <div style="width:58px;height:58px;border-radius:50%;background:${FIS_COLOR[r.global]};flex-shrink:0"></div>
-        <div><div class="area-name">Riesgo legal y de protección: ${FIS_LABEL[r.global]}</div><div class="area-sub">${r.riesgos.length} en riesgo · ${r.atencion.length} requieren atención</div></div>
+        <div><div class="area-name">Riesgo legal: ${FIS_LABEL[r.global]}</div><div class="area-sub">${r.riesgos.length} en riesgo · ${r.atencion.length} requieren atención</div></div>
       </div>
       <div class="card"><div class="section-title">Por frente</div>${r.grupos.filter(x=>x.nivel!=="n").map(x=>`<div class="small-row"><span>${esc(x.g.nombre)}</span><b style="color:${FIS_COLOR[x.nivel]}">● ${FIS_LABEL[x.nivel]}</b></div>`).join("")}</div>
-      <div class="card"><div class="section-title">Seguros del negocio</div>${r.seguros.map(s=>`<div class="small-row"><span>${esc(s.t)}</span><b style="color:${s.falta?"#B3261E":"#2E7D4F"}">${esc(s.estado)}</b></div>`).join("")}
-        ${r.brechaRC?`<p class="small" style="color:#B8860B;margin:6px 0 0">Brecha de RC: ${finM(r.brechaRC)} contra tu referencia.</p>`:""}</div>
       <div class="card"><div class="section-title">Paquete para el abogado</div>
         <div class="small-row"><span>Documentos entregados</span><b>${docsAplican.filter(dd=>ev.documentos[dd.k]==="Entregado").length} de ${docsAplican.length}</b></div>
         <label class="small muted" style="margin-top:8px">Abogado de la Red asignado</label>
@@ -6827,9 +6799,8 @@ function renderLegResultado(){
         ${!pend.length && r.riesgos.length ? `<button class="btn btn-ghost" id="leg-sugerir" style="margin-top:6px">Crear pendientes a partir de los riesgos</button>` : ""}</div>
       <div id="leg-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
       ${ev.estatus!=="completada"?`<button class="action-btn" id="leg-complete"><span>✓ Marcar como completado</span><span>→</span></button>`:""}
-      <button class="action-btn" id="leg-pdf-med" style="background:var(--navy-800)"><span>🛡 Mapa de riesgos y protección (médico)</span><span>→</span></button>
+      <button class="action-btn" id="leg-pdf-med" style="background:var(--navy-800)"><span>⚖️ Mapa legal (médico)</span><span>→</span></button>
       <button class="action-btn" id="leg-pdf-abo" style="background:#3a2f1a"><span>🔒 Paquete para el abogado (PDF)</span><span>→</span></button>
-      <button class="action-btn" id="leg-pdf-sus" style="background:#2c3e50"><span>📋 Ficha de suscripción de seguros (interna)</span><span>→</span></button>
       <button class="btn btn-ghost" id="leg-edit" style="margin-top:4px">Editar respuestas y documentos</button>
     </div>`;
   const guardar = async () => { const x = await legGuardar(ev); const n = document.getElementById("leg-note"); if(n) n.textContent = x.ok ? "Guardado." : (x.offline ? "📴 Sin conexión." : "No se pudo guardar."); };
@@ -6853,7 +6824,7 @@ function renderLegResultado(){
   const bc = document.getElementById("leg-complete");
   if(bc) bc.onclick = async ()=>{ const x = await legGuardar(ev,"completada"); if(!x.ok){ showError(x.offline?"Completar necesita conexión.":"No se pudo guardar: "+(x.error?.message||"")); return; } go("leg-resultado"); };
   const pdfBtn = (id, fn) => { document.getElementById(id).onclick = async (e)=>{ const b=e.currentTarget; b.disabled=true; try{ await fn(ev); }catch(err){ showError("No se pudo generar el PDF: "+(err&&err.message?err.message:err)); } b.disabled=false; }; };
-  pdfBtn("leg-pdf-med", generarPdfLegMedico); pdfBtn("leg-pdf-abo", generarPdfLegAbogado); pdfBtn("leg-pdf-sus", generarPdfLegSuscripcion);
+  pdfBtn("leg-pdf-med", generarPdfLegMedico); pdfBtn("leg-pdf-abo", generarPdfLegAbogado);
 }
 
 /* ------------------------- PDFs ------------------------- */
@@ -6862,13 +6833,13 @@ async function generarPdfLegMedico(ev){
   const r = legCalcular(ev.datos); const datosEst = await getDatosEst(ev.expediente_id);
   const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
   const c = finPdfBase(); fisioPdf(c, ev); const {doc} = c;
-  drawPortadaPdf(doc, {titulo:"Mapa de riesgos y protección", subtitulo:"Sobre qué está parada tu clínica y qué la protege", cliente:clinica, detalle:`Fecha: ${ev.fecha}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
-  c.header("Riesgos y protección de tu clínica", clinica);
+  drawPortadaPdf(doc, {titulo:"Mapa legal de tu clínica", subtitulo:"Sobre qué está parada tu clínica", cliente:clinica, detalle:`Fecha: ${ev.fecha}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
+  c.header("Situación legal de tu clínica", clinica);
   c.checkBreak(90); fisLuz(c, c.margin+28, c.y+24, r.global, 26);
   doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.setTextColor(...c.NAVY); doc.text(`Estado general: ${FIS_LABEL[r.global]}`, c.margin+70, c.y+18);
   doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK); doc.text(`${r.riesgos.length} riesgo(s) · ${r.atencion.length} punto(s) que requieren atención`, c.margin+70, c.y+36);
   c.y += 70;
-  c.body("Este mapa resume lo que podría poner en riesgo tu clínica: su estructura, su local, sus contratos, la relación con pacientes, su marca y qué tan protegida está. No es una opinión legal: muestra dónde conviene que un especialista revise.", {size:10, color:c.SOFT, lh:14}); c.y+=6;
+  c.body("Este mapa resume lo que podría poner en riesgo tu clínica: su estructura, su local, sus contratos, la relación con pacientes, y su marca. No es una opinión legal: muestra dónde conviene que un especialista revise.", {size:10, color:c.SOFT, lh:14}); c.y+=6;
   if(r.riesgos.length){ c.heading("Lo más urgente"); r.riesgos.forEach(x=>{ c.checkBreak(20); fisLuz(c, c.margin+6, c.y-4, "r", 4.5); doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK);
     doc.splitTextToSize(`${x.t}${x.resp?` — ${x.resp}`:""}`, c.maxW-20).forEach((l,i)=>{ doc.text(l, c.margin+18, c.y); c.y+=14; }); c.y+=3; }); }
   r.grupos.filter(x=>x.nivel!=="n").forEach(x=>{
@@ -6877,9 +6848,6 @@ async function generarPdfLegMedico(ev){
       doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK); doc.text(doc.splitTextToSize(i.p.t, c.maxW-200)[0], c.margin+18, c.y);
       doc.setTextColor(...c.SOFT); doc.text(doc.splitTextToSize(i.resp||"Sin dato", 180)[0], c.pageW-c.margin, c.y, {align:"right"}); c.y+=17; });
   });
-  c.heading("Tu protección hoy");
-  r.seguros.forEach(s=>c.row(s.t, s.estado, s.falta));
-  if(r.brechaRC) c.body(`Tu seguro de responsabilidad civil queda ${finM(r.brechaRC)} por debajo de la suma de referencia para tu tipo de práctica.`, {size:10, color:c.GOLD});
   const pend = ev.pendientes||[];
   if(pend.length){ c.heading(`Avance de tu abogado: ${pend.filter(x=>x.estatus==="Resuelto").length} de ${pend.length} resueltos`); pend.forEach(p=>c.row(p.tarea, p.estatus + (p.fecha?` · ${p.fecha}`:""), p.estatus==="Resuelto")); }
   c.y+=6; c.checkBreak(80); doc.setFillColor(241,231,210); doc.roundedRect(c.margin, c.y, c.maxW, 66, 6, 6, "F");
@@ -6888,7 +6856,7 @@ async function generarPdfLegMedico(ev){
   doc.splitTextToSize(`1) Revisión con el abogado de la Red Elementos Financieros${ev.abogado?` (${ev.abogado})`:""} para ordenar contratos, estructura y continuidad. 2) Revisión de protección con Elementos Financieros para cerrar las brechas de seguro de tu clínica.`, c.maxW-28).forEach((l,i)=>doc.text(l, c.margin+14, c.y+36+i*13));
   c.y += 82;
   c.body("Mapa elaborado con información proporcionada por el médico. No constituye opinión legal ni recomendación de un producto de seguro específico.", {size:8.5, color:c.SOFT, lh:11});
-  await c.save(`MAPA-RIESGOS-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
+  await c.save(`MAPA-LEGAL-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
 }
 async function generarPdfLegAbogado(ev){
   if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
@@ -6906,14 +6874,12 @@ async function generarPdfLegAbogado(ev){
   LEG_GRUPOS.filter(g=>g.id!=="seguros").forEach(g=>{ const ps = g.preguntas.filter(p=>!p.si || p.si(d)); if(!ps.length) return; c.body(g.nombre, {bold:true, size:10.5, color:c.NAVY}); ps.forEach(p=>c.row(p.t, d[p.k]||"Sin dato")); c.y+=2; });
   c.heading("3. Documentos");
   LEG_DOCS.filter(dd=>!dd.si || dd.si(d)).forEach(dd=>c.row(dd.t, ev.documentos[dd.k]||"Sin marcar", ev.documentos[dd.k]==="Pendiente"));
-  c.heading("4. Seguros vigentes (para coordinar contratos y cláusulas)");
-  r.seguros.forEach(s=>c.row(s.t, s.estado));
   const pend = ev.pendientes||[];
-  c.heading(`5. Plan de trabajo (${pend.filter(x=>x.estatus==="Resuelto").length}/${pend.length} resueltos)`);
+  c.heading(`4. Plan de trabajo (${pend.filter(x=>x.estatus==="Resuelto").length}/${pend.length} resueltos)`);
   if(pend.length) pend.forEach(p=>c.row(p.tarea, p.estatus + (p.fecha?` · ${p.fecha}`:""))); else c.body("Por definir por el abogado.", {size:10});
-  c.heading("6. Para cerrar con el médico");
+  c.heading("5. Para cerrar con el médico");
   const pts = [];
-  if(LEG_SOCIOS(d)) pts.push("Acuerdo de socios con cláusula de compraventa ante fallecimiento o invalidez, coordinado con el seguro intersocios.");
+  if(LEG_SOCIOS(d)) pts.push("Acuerdo de socios con cláusula de compraventa ante fallecimiento o invalidez (coordinar el fondeo con el módulo de Riesgos y seguros).");
   if(LEG_RENTA(d)) pts.push("Revisión o renegociación del contrato del local (plazo, renovación, inversión y salida).");
   pts.push("Contratos con médicos, aplicadores y proveedores; revisar riesgo laboral del personal por honorarios.");
   pts.push("Términos con pacientes, aviso de privacidad, consentimiento de imagen y procedimiento de derechos sobre datos.");
@@ -6923,36 +6889,281 @@ async function generarPdfLegAbogado(ev){
   c.y+=8; c.body("Información declarada por el médico y no verificada documentalmente. Documento de trabajo para el especialista.", {size:8.5, color:c.SOFT, lh:11});
   await c.save(`ABOGADO-PAQUETE-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
 }
-async function generarPdfLegSuscripcion(ev){
+
+/* ------------------------- Riesgos y seguros -------------------------
+   Todo tipo de seguro excepto vida y gastos médicos mayores personales del médico.
+   Semáforo propuesto por Elementos Financieros: criterio de prudencia, no obligación legal
+   (salvo donde se indica). Lo valida el especialista. */
+const RIE_SOCIOS = d => d.socios==="Sí, tiene socios";
+const RIE_EMPLEADOS = d => (finN(d.numPersonal)||0) > 0;
+const RIE_TIENE = k => d => d[k]==="Tiene";
+const RIE_GRUPOS = [
+  {id:"rc", nombre:"Responsabilidad civil", preguntas:[
+    {k:"rc", t:"Seguro de responsabilidad civil profesional médica", o:[["Tiene","v"],["No tiene","r"],["No sabe","r"]]},
+    {k:"rcAseguradora", t:"Aseguradora del RC profesional", txt:true, si:RIE_TIENE("rc")},
+    {k:"rcSuma", t:"Suma asegurada del RC profesional (MXN)", num:true, si:RIE_TIENE("rc")},
+    {k:"rcVigencia", t:"Vigencia del RC profesional (fecha de fin, AAAA-MM-DD)", txt:true, si:RIE_TIENE("rc")},
+    {k:"rcProcedimientos", t:"El RC cubre todos los procedimientos que realiza (incluidos los estéticos, si los hace)", si:RIE_TIENE("rc"), o:[["Sí","v"],["No","r"],["No sabe","r"]]},
+    {k:"rcPersonal", t:"El RC cubre a todo el personal que atiende pacientes", si:RIE_TIENE("rc"), o:[["Sí","v"],["Solo al médico","a"],["No sabe","a"]]},
+    {k:"rcDefensa", t:"Incluye defensa legal y gastos de juicio", si:RIE_TIENE("rc"), o:[["Sí","v"],["No","a"],["No sabe","a"]]},
+    {k:"rcRetro", t:"Asegurado sin interrupción desde (año)", txt:true, si:RIE_TIENE("rc")},
+    {k:"rcSiniestros", t:"Reclamaciones previas al seguro de RC", o:[["Ninguna","v"],["Sí","a"]]},
+    {k:"rcEstab", t:"RC general del establecimiento (daños a terceros en el local: caídas, accidentes)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+  ]},
+  {id:"bienes", nombre:"Bienes de la clínica", preguntas:[
+    {k:"danos", t:"Seguro de incendio y daños del local y su contenido", o:[["Tiene","v"],["No tiene","r"],["No sabe","a"]]},
+    {k:"equipoElec", t:"Seguro de equipo electrónico y médico (descompostura, variación de voltaje, rotura)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"],["No tiene equipos de valor","n"]]},
+    {k:"robo", t:"Seguro de robo con violencia y asalto (incluye dinero en caja)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"valorEquipos", t:"Valor aproximado de equipos y mobiliario (MXN)", num:true},
+    {k:"sumaBienes", t:"La suma asegurada corresponde al valor actual de los bienes", si:d=>["danos","equipoElec","robo"].some(k=>d[k]==="Tiene"), o:[["Sí, se actualizó este año","v"],["No se ha actualizado","a"],["No sabe","a"]]},
+  ]},
+  {id:"continuidad", nombre:"Continuidad del negocio", preguntas:[
+    {k:"interrupcion", t:"Seguro por interrupción del negocio (pérdida de ingresos si la clínica no puede operar)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"personaClave", t:"Seguro de persona clave (la clínica recibe dinero si el médico falta o queda inválido)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"intersocios", t:"Seguro intersocios (fondea la compra de la parte del socio que falte)", si:RIE_SOCIOS, o:[["Tiene","v"],["No tiene","r"],["No sabe","a"]]},
+    {k:"ciber", t:"Ciberseguro (robo o secuestro de datos de pacientes, extorsión digital)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"fidelidad", t:"Seguro de fidelidad (robo o fraude cometido por empleados)", si:RIE_EMPLEADOS, o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+  ]},
+  {id:"equipo", nombre:"Equipo de trabajo", preguntas:[
+    {k:"gmmColectivo", t:"Gastos médicos mayores colectivo para el equipo", si:RIE_EMPLEADOS, o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"vidaGrupo", t:"Seguro de vida de grupo para el equipo", si:RIE_EMPLEADOS, o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"autosClinica", t:"Vehículos a nombre de la clínica asegurados (con RC amplia)", o:[["Tiene","v"],["No tiene","r"],["No sabe","a"],["No hay vehículos de la clínica","n"]]},
+  ]},
+  {id:"personal", nombre:"Bienes personales del médico (sin vida ni GMM)", preguntas:[
+    {k:"casa", t:"Seguro de casa habitación (incendio, sismo, robo, contenidos)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"autosPersonales", t:"Autos personales asegurados con RC amplia", o:[["Tiene","v"],["No tiene","r"],["No sabe","a"],["No tiene auto","n"]]},
+    {k:"rcFamiliar", t:"RC familiar o privada (daños que él o su familia causen a terceros fuera del trabajo)", o:[["Tiene","v"],["No tiene","a"],["No sabe","a"]]},
+    {k:"polizasNombre", t:"Cada póliza está a nombre de quien es dueño del bien o de la actividad (clínica o médico)", o:[["Sí","v"],["No","a"],["No sabe","a"]]},
+    {k:"revisionAnual", t:"Revisa sus seguros cada año con un asesor", o:[["Sí","v"],["No","a"]]},
+  ]},
+];
+const RIE_DOCS = [
+  {k:"polizas", t:"Carátulas y condiciones generales de las pólizas vigentes"},
+  {k:"recibos", t:"Recibos de pago de las primas"},
+  {k:"siniestros", t:"Reclamaciones o siniestros previos (si hay)", si:d=>d.rcSiniestros==="Sí"},
+];
+const RIE_SEGUROS = [
+  {k:"rc", t:"RC profesional médica"}, {k:"rcEstab", t:"RC general del establecimiento"},
+  {k:"danos", t:"Incendio y daños"}, {k:"equipoElec", t:"Equipo electrónico y médico"}, {k:"robo", t:"Robo y asalto"},
+  {k:"interrupcion", t:"Interrupción del negocio"}, {k:"personaClave", t:"Persona clave"}, {k:"intersocios", t:"Intersocios", si:RIE_SOCIOS},
+  {k:"ciber", t:"Ciberseguro"}, {k:"fidelidad", t:"Fidelidad de empleados", si:RIE_EMPLEADOS},
+  {k:"gmmColectivo", t:"GMM colectivo del equipo", si:RIE_EMPLEADOS}, {k:"vidaGrupo", t:"Vida de grupo del equipo", si:RIE_EMPLEADOS},
+  {k:"autosClinica", t:"Autos de la clínica"}, {k:"casa", t:"Casa habitación"}, {k:"autosPersonales", t:"Autos personales"}, {k:"rcFamiliar", t:"RC familiar"},
+];
+function rieExtras(d){
+  const ex = [];
+  if(d.rc==="Tiene" && d.rcVigencia && d.rcVigencia < new Date().toISOString().slice(0,10)) ex.push({grupo:"Responsabilidad civil", t:"La póliza de RC profesional está vencida", nivel:"r"});
+  if(RIE_SOCIOS(d) && d.intersocios!=="Tiene" && d.compraventaSocios && d.compraventaSocios!=="Sí, con fondeo (seguro)") ex.push({grupo:"Continuidad del negocio", t:"Socios sin acuerdo de compraventa fondeado por seguro intersocios", nivel:"r"});
+  return ex;
+}
+
+/* =========================== RIESGOS Y SEGUROS (módulo propio) ===========================
+   Separado de Legal. Todo tipo de seguro excepto vida y GMM personales del médico.
+   El semáforo es criterio de prudencia de Elementos Financieros, no obligación legal. */
+const RIE_CONTEXTO = {id:"contexto", nombre:"Contexto", preguntas:[
+  {k:"socios", t:"¿Tiene socios?", o:[["No, es solo el médico","n"],["Sí, tiene socios","n"]]},
+  {k:"numPersonal", t:"Personas que trabajan en la clínica además del médico", num:true},
+]};
+const RIE_GRUPOS_PM = [RIE_CONTEXTO, ...RIE_GRUPOS];
+function rieCalcular(datos){
+  const d = datos||{};
+  const grupos = RIE_GRUPOS.map(g=>{
+    const items = g.preguntas.filter(p=>!p.num && !p.txt && (!p.si || p.si(d))).map(p=>{ const op = (p.o||[]).find(o=>o[0]===d[p.k]); return {p, resp:d[p.k]||"", nivel: op ? op[1] : "x"}; });
+    const nv = items.map(i=>i.nivel).filter(n=>n!=="n");
+    const nivel = !nv.length ? "n" : nv.includes("r") ? "r" : nv.includes("a") ? "a" : nv.every(n=>n==="x") ? "x" : nv.includes("x") ? "a" : "v";
+    return {g, items, nivel};
+  });
+  const extras = rieExtras(d);
+  const ref = finN(d.rcReferencia), suma = finN(d.rcSuma);
+  const brechaRC = (d.rc==="Tiene" && ref && suma!==null && suma<ref) ? ref - suma : null;
+  if(brechaRC) extras.push({grupo:"Responsabilidad civil", t:`Suma asegurada de RC por debajo de la referencia (faltan ${finM(brechaRC)})`, nivel:"a"});
+  const niv = grupos.map(x=>x.nivel).concat(extras.map(e=>e.nivel));
+  const global = niv.includes("r") ? "r" : niv.includes("a") ? "a" : niv.every(n=>n==="x"||n==="n") ? "x" : "v";
+  const lista = n => grupos.flatMap(x=>x.items.filter(i=>i.nivel===n).map(i=>({grupo:x.g.nombre, t:i.p.t, resp:i.resp}))).concat(extras.filter(e=>e.nivel===n).map(e=>({grupo:e.grupo, t:e.t, resp:""})));
+  const seguros = RIE_SEGUROS.filter(s=>!s.si || s.si(d)).map(s=>({...s, estado: d[s.k]||"Sin dato", falta: d[s.k]!=="Tiene" && !/^No (hay|tiene auto|tiene equipos)/.test(d[s.k]||"")}));
+  return {grupos, extras, global, riesgos:lista("r"), atencion:lista("a"), brechaRC, seguros};
+}
+async function renderCardRiesgos(container, exp){
+  const card = document.createElement("div");
+  card.className = "card area-card";
+  card.innerHTML = `<div class="area-head" style="cursor:default"><div class="area-icon">🛡️</div>
+    <div style="flex:1;min-width:0"><div class="area-name">Riesgos y seguros</div><div class="area-sub">Todo tipo de seguro excepto vida y GMM personales</div></div></div>
+    <div class="area-body"><div id="rie-list"><div class="muted small">Cargando…</div></div>
+    <button class="action-btn" id="btn-rie-new" style="margin-top:10px;margin-bottom:0"><span>+ Nuevo check-up de riesgos</span><span>→</span></button></div>`;
+  container.appendChild(card);
+  card.querySelector("#btn-rie-new").onclick = () => rieIniciar(exp);
+  const list = card.querySelector("#rie-list");
+  if(!navigator.onLine){ list.innerHTML = `<div class="empty-note">Sin conexión.</div>`; return; }
+  const { data, error } = await sb.from("evaluaciones_riesgos").select("*").eq("expediente_id", exp.id).is("anulado_at", null).order("fecha",{ascending:false});
+  if(error){ list.innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
+  list.innerHTML = (data||[]).length ? "" : `<div class="empty-note">Sin check-ups de riesgos todavía.</div>`;
+  (data||[]).forEach(ev=>{
+    const r = rieCalcular(ev.datos);
+    const row = document.createElement("div"); row.className="small-row"; row.style.cursor="pointer";
+    row.innerHTML = `<span>${esc(ev.fecha)} · ${r.seguros.filter(s=>s.falta).length} seguro(s) por revisar</span><span style="font-weight:600;color:${FIS_COLOR[r.global]}">● ${FIS_LABEL[r.global]}</span>`;
+    row.onclick = () => { state.rieEval = {...ev, expediente_nombre: exp.nombre_expediente, secIdx:0}; go(ev.estatus==="completada" ? "rie-resultado" : "rie-wizard"); };
+    list.appendChild(row);
+  });
+}
+/* Hereda lo que ya se capturó: socios y personal del check-up legal, y los seguros que antes vivían ahí. */
+const RIE_DESDE_LEGAL = ["socios","numPersonal","compraventaSocios","rc","rcAseguradora","rcSuma","rcVigencia","rcPersonal","rcDefensa","rcRetro","rcSiniestros","rcEstab","danos","valorEquipos","interrupcion","personaClave","intersocios","gmmColectivo","vidaGrupo","rcReferencia"];
+async function rieIniciar(exp){
+  const datos = {};
+  try{
+    const { data } = await sb.from("evaluaciones_legales").select("datos").eq("expediente_id", exp.id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1);
+    const l = data && data[0] && data[0].datos;
+    if(l){ RIE_DESDE_LEGAL.forEach(k=>{ if(l[k]!==undefined && l[k]!=="") datos[k] = l[k]; }); if(l.rcEsteticos) datos.rcProcedimientos = l.rcEsteticos; }
+  }catch(e){}
+  state.rieEval = {id:null, expediente_id:exp.id, expediente_nombre:exp.nombre_expediente, fecha:new Date().toISOString().slice(0,10), estatus:"borrador", datos, documentos:{}, asesor:"", pendientes:[], secIdx:0};
+  go("rie-wizard");
+}
+async function rieGuardar(ev, estatus){
+  if(!navigator.onLine) return {ok:false, offline:true};
+  const row = {expediente_id:ev.expediente_id, fecha:ev.fecha, datos:ev.datos, documentos:ev.documentos, asesor:ev.asesor||null, pendientes:ev.pendientes||[], estatus: estatus||ev.estatus||"borrador"};
+  if(row.estatus==="completada"){ const r = rieCalcular(ev.datos); row.resultado = {global:r.global, riesgos:r.riesgos.length, segurosFaltantes:r.seguros.filter(s=>s.falta).map(s=>s.k)}; }
+  const res = ev.id ? await sb.from("evaluaciones_riesgos").update(row).eq("id", ev.id).select("id").single()
+                    : await sb.from("evaluaciones_riesgos").insert(row).select("id").single();
+  if(res.error) return {ok:false, error:res.error};
+  ev.id = res.data.id; ev.estatus = row.estatus; return {ok:true};
+}
+function renderRieWizard(){
+  const ev = state.rieEval; if(!ev){ go("dashboard"); return; }
+  const G = RIE_GRUPOS_PM, total = G.length + 1, esDocs = ev.secIdx === G.length;
+  const g = esDocs ? null : G[ev.secIdx]; const d = ev.datos;
+  $app.innerHTML = `
+    <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+      <div style="flex:1"><p class="brand">RIESGOS Y SEGUROS · ${ev.secIdx+1} DE ${total}</p><h1 style="font-size:18px">${esDocs?"Documentos de seguros":esc(g.nombre)}</h1></div></div>
+      <div style="height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin-top:10px"><div style="height:4px;width:${Math.round(100*(ev.secIdx+1)/total)}%;background:var(--gold-500);border-radius:2px"></div></div></div>
+    <div class="content">
+      <p class="muted small" style="margin:0 0 10px">${esDocs ? "Marca qué te entregó el médico (copias de pólizas y recibos)." : g.id==="contexto" ? "Si ya hiciste el check-up legal, esto viene lleno. Sirve para saber qué seguros aplican." : "Sin vida ni gastos médicos personales del médico: esos van en la fase patrimonial."}</p>
+      <div id="rie-form"></div>
+      <div id="rie-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
+      <div style="display:flex;gap:10px">${ev.secIdx>0?`<button class="btn btn-ghost" id="rie-prev" style="flex:1">← Anterior</button>`:""}
+        <button class="btn btn-primary" id="rie-next" style="flex:2">${ev.secIdx===total-1?"Ver resultado →":"Siguiente →"}</button></div>
+    </div>`;
+  const form = document.getElementById("rie-form");
+  const pintar = () => {
+    form.innerHTML = "";
+    if(esDocs){
+      RIE_DOCS.filter(dd=>!dd.si || dd.si(d)).forEach(dd=>{
+        const card = document.createElement("div"); card.className="card"; card.style.padding="12px";
+        const cur = ev.documentos[dd.k]||"";
+        card.innerHTML = `<div style="font-weight:500;margin-bottom:8px">${esc(dd.t)}</div><div class="chip-grid">${["Entregado","Pendiente","No aplica"].map(o=>`<span class="chip ${cur===o?"selected":""}" data-o="${o}">${o}</span>`).join("")}</div>`;
+        card.querySelectorAll(".chip").forEach(ch=>ch.onclick=()=>{ ev.documentos[dd.k]=ch.dataset.o; card.querySelectorAll(".chip").forEach(x=>x.classList.toggle("selected",x===ch)); });
+        form.appendChild(card);
+      });
+      return;
+    }
+    const ps = g.preguntas.filter(p=>!p.si || p.si(d));
+    if(g.id==="rc") ps.push({k:"rcReferencia", t:"Suma de RC de referencia para este tipo de práctica (la defines tú; MXN)", num:true, sup:true});
+    ps.forEach(p=>{
+      const card = document.createElement("div"); card.className="card"; card.style.padding="12px";
+      if(p.num || p.txt){
+        card.innerHTML = `<div style="font-weight:500;margin-bottom:8px">${esc(p.t)}</div><input type="text" ${p.num?'inputmode="decimal"':""} value="${esc(d[p.k]??"")}">${p.sup?`<p class="muted small" style="margin:6px 0 0">Supuesto tuyo: el reporte compara la suma asegurada contra esta referencia.</p>`:""}`;
+        card.querySelector("input").addEventListener("change", e=>{ d[p.k] = e.target.value.trim(); pintar(); });
+      } else {
+        card.innerHTML = `<div style="font-weight:500;margin-bottom:8px">${esc(p.t)}</div>` + p.o.map(([val,n])=>`<div class="op-opt ${d[p.k]===val?"selected":""}" data-val="${esc(val)}"><span class="op-lvl" style="background:${FIS_COLOR[n]}">●</span><span>${esc(val)}</span></div>`).join("");
+        card.querySelectorAll(".op-opt").forEach(o=>o.onclick=()=>{ d[p.k] = o.dataset.val; pintar(); });
+      }
+      form.appendChild(card);
+    });
+  };
+  pintar();
+  const guardar = async () => { const r = await rieGuardar(ev); if(!r.ok){ const n=document.getElementById("rie-note"); if(n) n.textContent = r.offline ? "📴 Sin conexión: se guardará al recuperar señal." : "No se pudo guardar: "+(r.error?.message||""); } };
+  document.getElementById("btn-back").onclick = async () => { await guardar(); go("expediente", {currentExpediente:{id:ev.expediente_id, nombre_expediente:ev.expediente_nombre}}); };
+  const prev = document.getElementById("rie-prev"); if(prev) prev.onclick = async ()=>{ await guardar(); ev.secIdx--; go("rie-wizard"); };
+  document.getElementById("rie-next").onclick = async ()=>{ await guardar(); if(ev.secIdx<total-1){ ev.secIdx++; go("rie-wizard"); } else go("rie-resultado"); };
+}
+function renderRieResultado(){
+  const ev = state.rieEval; if(!ev){ go("dashboard"); return; }
+  const r = rieCalcular(ev.datos);
+  $app.innerHTML = `
+    <div class="topbar"><div class="topbar-row"><button class="back-btn" id="btn-back">←</button>
+      <div style="flex:1"><p class="brand">RIESGOS Y SEGUROS</p><h1 style="font-size:18px">${esc(ev.expediente_nombre||"")}</h1></div></div></div>
+    <div class="content">
+      <div class="card" style="display:flex;align-items:center;gap:14px">
+        <div style="width:58px;height:58px;border-radius:50%;background:${FIS_COLOR[r.global]};flex-shrink:0"></div>
+        <div><div class="area-name">Protección: ${FIS_LABEL[r.global]}</div><div class="area-sub">${r.riesgos.length} en riesgo · ${r.atencion.length} requieren atención</div></div>
+      </div>
+      <div class="card"><div class="section-title">Por frente</div>${r.grupos.filter(x=>x.nivel!=="n").map(x=>`<div class="small-row"><span>${esc(x.g.nombre)}</span><b style="color:${FIS_COLOR[x.nivel]}">● ${FIS_LABEL[x.nivel]}</b></div>`).join("")}</div>
+      <div class="card"><div class="section-title">Mapa de seguros</div>${r.seguros.map(s=>`<div class="small-row"><span>${esc(s.t)}</span><b style="color:${s.falta?"#B3261E":"#2E7D4F"}">${esc(s.estado)}</b></div>`).join("")}
+        ${r.brechaRC?`<p class="small" style="color:#B8860B;margin:6px 0 0">Brecha de RC: ${finM(r.brechaRC)} contra tu referencia.</p>`:""}</div>
+      ${r.riesgos.length?`<div class="card"><div class="section-title" style="color:#B3261E">En riesgo</div>${r.riesgos.map(x=>`<div class="small-row" style="display:block">${esc(x.t)}${x.resp?` — <i>${esc(x.resp)}</i>`:""}</div>`).join("")}</div>`:""}
+      <div id="rie-note" class="muted small" style="text-align:center;margin:6px 0 10px"></div>
+      ${ev.estatus!=="completada"?`<button class="action-btn" id="rie-complete"><span>✓ Marcar como completado</span><span>→</span></button>`:""}
+      <button class="action-btn" id="rie-pdf-med" style="background:var(--navy-800)"><span>🛡 Mapa de protección (médico)</span><span>→</span></button>
+      <button class="action-btn" id="rie-pdf-sus" style="background:#2c3e50"><span>📋 Ficha de suscripción de seguros (interna)</span><span>→</span></button>
+      <button class="btn btn-ghost" id="rie-edit" style="margin-top:4px">Editar respuestas y documentos</button>
+    </div>`;
+  document.getElementById("btn-back").onclick = () => go("expediente", {currentExpediente:{id:ev.expediente_id, nombre_expediente:ev.expediente_nombre}});
+  document.getElementById("rie-edit").onclick = () => { ev.secIdx = 0; go("rie-wizard"); };
+  const bc = document.getElementById("rie-complete");
+  if(bc) bc.onclick = async ()=>{ const x = await rieGuardar(ev,"completada"); if(!x.ok){ showError(x.offline?"Completar necesita conexión.":"No se pudo guardar: "+(x.error?.message||"")); return; } go("rie-resultado"); };
+  const pdfBtn = (id, fn) => { document.getElementById(id).onclick = async (e)=>{ const b=e.currentTarget; b.disabled=true; try{ await fn(ev); }catch(err){ showError("No se pudo generar el PDF: "+(err&&err.message?err.message:err)); } b.disabled=false; }; };
+  pdfBtn("rie-pdf-med", generarPdfRieMedico); pdfBtn("rie-pdf-sus", generarPdfRieSuscripcion);
+}
+async function generarPdfRieMedico(ev){
   if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
-  const r = legCalcular(ev.datos); const d = ev.datos; const datosEst = await getDatosEst(ev.expediente_id);
+  const r = rieCalcular(ev.datos); const datosEst = await getDatosEst(ev.expediente_id);
+  const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
+  const c = finPdfBase(); fisioPdf(c, ev); const {doc} = c;
+  drawPortadaPdf(doc, {titulo:"Mapa de protección", subtitulo:"Qué protege hoy a tu clínica y a tus bienes", cliente:clinica, detalle:`Fecha: ${ev.fecha}`, detalle2:[datosEst.municipio, datosEst.estado].filter(Boolean).join(", ")});
+  c.header("Riesgos y seguros", clinica);
+  c.checkBreak(90); fisLuz(c, c.margin+28, c.y+24, r.global, 26);
+  doc.setFont("helvetica","bold"); doc.setFontSize(16); doc.setTextColor(...c.NAVY); doc.text(`Estado general: ${FIS_LABEL[r.global]}`, c.margin+70, c.y+18);
+  doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK); doc.text(`${r.riesgos.length} riesgo(s) · ${r.atencion.length} punto(s) que requieren atención`, c.margin+70, c.y+36);
+  c.y += 70;
+  c.body("Este mapa muestra qué tan protegidos están tu clínica, tu equipo y tus bienes ante un accidente, una demanda o una pérdida. No incluye tus seguros de vida ni de gastos médicos personales, que se revisan en la fase patrimonial. El semáforo es un criterio de prudencia, no una obligación legal.", {size:10, color:c.SOFT, lh:13});
+  if(r.riesgos.length){ c.heading("Lo más urgente"); r.riesgos.forEach(x=>{ c.checkBreak(20); fisLuz(c, c.margin+6, c.y-4, "r", 4.5); doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK);
+    doc.splitTextToSize(`${x.t}${x.resp?` — ${x.resp}`:""}`, c.maxW-20).forEach(l=>{ doc.text(l, c.margin+18, c.y); c.y+=14; }); c.y+=3; }); }
+  c.heading("Tu protección hoy");
+  r.seguros.forEach(s=>c.row(s.t, s.estado, s.falta));
+  if(r.brechaRC) c.body(`Tu seguro de responsabilidad civil queda ${finM(r.brechaRC)} por debajo de la suma de referencia para tu tipo de práctica.`, {size:10, color:c.GOLD});
+  r.grupos.filter(x=>x.nivel!=="n").forEach(x=>{
+    c.heading(x.g.nombre + "  ·  " + FIS_LABEL[x.nivel]);
+    x.items.filter(i=>i.nivel!=="n").forEach(i=>{ c.checkBreak(20); fisLuz(c, c.margin+6, c.y-4, i.nivel, 4.5);
+      doc.setFont("helvetica","normal"); doc.setFontSize(10.5); doc.setTextColor(...c.INK); doc.text(doc.splitTextToSize(i.p.t, c.maxW-200)[0], c.margin+18, c.y);
+      doc.setTextColor(...c.SOFT); doc.text(doc.splitTextToSize(i.resp||"Sin dato", 180)[0], c.pageW-c.margin, c.y, {align:"right"}); c.y+=17; });
+  });
+  c.y+=8; c.body("Mapa elaborado con información proporcionada por el médico. No constituye recomendación de un producto de seguro específico; las coberturas dependen de las condiciones de cada póliza.", {size:8.5, color:c.SOFT, lh:11});
+  await c.save(`MAPA-PROTECCION-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
+}
+async function generarPdfRieSuscripcion(ev){
+  if(!window.jspdf){ showError("El generador de PDF no cargó (requiere conexión la primera vez)."); return; }
+  const r = rieCalcular(ev.datos); const d = {...ev.datos}; const datosEst = await getDatosEst(ev.expediente_id);
   const clinica = datosEst.nombreComercial || ev.expediente_nombre || "Clínica";
   let fin = null, trats = [];
-  try{ const { data } = await sb.from("evaluaciones_financieras").select("*").eq("expediente_id", ev.expediente_id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1); if(data && data[0]){ fin = finCalcular(data[0].datos, data[0].supuestos); trats = fin.tr; } }catch(e){}
+  try{
+    const [f, l] = await Promise.all([
+      sb.from("evaluaciones_financieras").select("*").eq("expediente_id", ev.expediente_id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1),
+      sb.from("evaluaciones_legales").select("datos").eq("expediente_id", ev.expediente_id).is("anulado_at", null).order("fecha",{ascending:false}).limit(1)]);
+    if(f.data && f.data[0]){ fin = finCalcular(f.data[0].datos, f.data[0].supuestos); trats = fin.tr || []; }
+    const ld = l.data && l.data[0] && l.data[0].datos; if(ld) ["tipoPersona","numSocios","externos","local","quejas","demandas"].forEach(k=>{ if(d[k]===undefined) d[k]=ld[k]; });
+  }catch(e){}
   const c = finPdfBase(); fisioPdf(c, ev);
-  c.header("Ficha de suscripción — seguros del negocio", clinica);
+  c.header("Ficha de suscripción — seguros", clinica);
   c.body("USO INTERNO · Elementos Financieros. Datos para cotizar; confirmar con el médico antes de enviar a la aseguradora.", {bold:true, size:9.5, color:c.RED});
   datosEstLineas(datosEst).forEach(l=>c.body(l, {size:9.5, color:c.SOFT, lh:13})); c.y+=6;
   c.heading("1. Perfil del riesgo");
-  c.row("Tipo de persona", d.tipoPersona||"—"); c.row("Socios", LEG_SOCIOS(d) ? (d.numSocios||"Sí") : "No");
+  c.row("Tipo de persona", d.tipoPersona||"—"); c.row("Socios", RIE_SOCIOS(d) ? (d.numSocios||"Sí") : (d.socios ? "No" : "—"));
   c.row("Personas que trabajan además del médico", d.numPersonal||"—"); c.row("Médicos o aplicadores externos", d.externos||"—");
-  c.row("Facturación anual estimada", fin ? finM(fin.venta*12) : "—"); c.row("Valor aproximado de equipos", finM(finN(d.valorEquipos)));
+  c.row("Facturación anual estimada", fin ? finM(fin.venta*12) : "—"); c.row("Valor aproximado de equipos y mobiliario", finM(finN(d.valorEquipos)));
   c.row("Local", d.local||"—"); c.row("Quejas / demandas previas", `${d.quejas||"—"} / ${d.demandas||"—"}`); c.row("Reclamaciones previas al seguro", d.rcSiniestros||"—");
   if(trats.length){ c.body("Procedimientos principales:", {bold:true, size:10.5}); trats.forEach(t=>c.row(t.nombre, `${t.cantidad} al mes`)); }
   else c.body("Procedimientos: completar en el diagnóstico financiero o al confirmar con el médico.", {size:10, color:c.SOFT});
   c.heading("2. RC profesional actual");
-  if(d.rc==="Tiene"){ [["Aseguradora","rcAseguradora"],["Suma asegurada","rcSuma"],["Vigencia","rcVigencia"],["Deducible","rcDeducible"],["Cubre estéticos","rcEsteticos"],["Cubre a todo el personal","rcPersonal"],["Defensa legal","rcDefensa"],["Asegurado sin interrupción desde","rcRetro"]].forEach(([l,k])=>c.row(l, k==="rcSuma"?finM(finN(d[k])):(d[k]||"—")));
+  if(d.rc==="Tiene"){ [["Aseguradora","rcAseguradora"],["Suma asegurada","rcSuma"],["Vigencia","rcVigencia"],["Cubre todos sus procedimientos","rcProcedimientos"],["Cubre a todo el personal","rcPersonal"],["Defensa legal","rcDefensa"],["Asegurado sin interrupción desde","rcRetro"]].forEach(([l,k])=>c.row(l, k==="rcSuma" ? finM(finN(d[k])) : (d[k]||"—")));
     if(r.brechaRC) c.row("Brecha contra referencia", finM(r.brechaRC), true); }
   else c.body(`Sin póliza (${d.rc||"sin dato"}).`, {size:10.5, color:c.RED});
   c.heading("3. Seguros a cotizar");
   const cot = r.seguros.filter(s=>s.falta);
-  if(cot.length) cot.forEach(s=>{ c.row(s.t, s.estado, true); if(s.nota) c.body(s.nota, {size:9, color:c.SOFT, lh:12, indent:6}); });
-  else c.body("La clínica tiene todos los seguros aplicables; revisar sumas, exclusiones y vigencias en la renovación.", {size:10});
-  if(r.seguros.find(s=>s.k==="rc" && !s.falta) && d.rcEsteticos!=="Sí") c.body("Prioridad: confirmar que la póliza de RC cubra procedimientos estéticos; si no, cotizar una que sí.", {bold:true, size:10, color:c.RED});
+  if(cot.length) cot.forEach(s=>c.row(s.t, s.estado, true));
+  else c.body("Tiene todos los seguros aplicables; revisar sumas, exclusiones y vigencias en la renovación.", {size:10});
+  if(d.rc==="Tiene" && d.rcProcedimientos!=="Sí") c.body("Prioridad: confirmar que la póliza de RC cubra todos los procedimientos que realiza; si no, cotizar una que sí.", {bold:true, size:10, color:c.RED});
+  if(RIE_EMPLEADOS(d)) c.body("GMM colectivo: puede ser deducible como previsión social si cumple requisitos; validar con el fiscalista.", {size:9, color:c.SOFT, lh:12});
   c.y+=8; c.body("Recordatorio: el diagnóstico es neutral; informar al médico que Elementos Financieros también puede cotizar y que puede comparar con otras opciones.", {size:8.5, color:c.SOFT, lh:11});
   await c.save(`FICHA-SUSCRIPCION-${carpetaSlug(clinica,4)}-${ev.fecha}.pdf`);
 }
-
 
 /* ------------------------- Spa: clasificación automática por servicios -------------------------
    Si se elige "Spa", la herramienta pregunta qué se hace en las cabinas. Si hay servicios médicos
